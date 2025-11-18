@@ -64,3 +64,10 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
+model Post {
+  id          String   @id @default(uuid())
+  name        String
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdById String
+  createdAt   DateTime @default(now())
+}
