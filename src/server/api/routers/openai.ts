@@ -1,34 +1,31 @@
 import { z } from "zod";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
+import OpenAI from "openai";
+
+// Initialize OpenAI Client
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 export const openaiRouter = createTRPCRouter({
   chat: publicProcedure
     .input(z.object({ message: z.string() }))
     .mutation(async ({ input }) => {
-      const openaiApiKey = process.env.OPENAI_API_KEY;
-      if (!openaiApiKey) throw new Error("OpenAI API key missing");
+      try {
+        const completion = await openai.chat.completions.create({
+          messages: [
+            { role: "system", content: "You are a helpful therapy AI." },
+            { role: "user", content: input.message }
+          ],
+          model: "gpt-3.5-turbo",
+        });
 
-      // Compose messages for ChatGPT
-      const payload = {
-        model: "gpt-4", // or "gpt-3.5-turbo"
-        messages: [
-          { role: "system", content: "You are a helpful, supportive AI therapist." },
-          { role: "user", content: input.message },
-        ]
-      };
-
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${openaiApiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json();
-      const reply = data.choices?.[0]?.message?.content ?? "Sorry, I couldn't generate a reply.";
-
-      return { reply };
+        return {
+          reply: completion.choices[0]?.message?.content ?? "I'm not sure what to say.",
+        };
+      } catch (error) {
+        console.error("OpenAI Error:", error);
+        throw new Error("Failed to fetch response from AI");
+      }
     }),
 });
