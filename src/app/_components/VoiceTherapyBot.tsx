@@ -1,7 +1,6 @@
 "use client";
-
 import { useRef, useState } from "react";
-import { api } from "~/trpc/react"; // tRPC hooks
+import { api } from "~/trpc/react"; // Adjust path if needed
 
 function speak(text: string) {
   const synth = window.speechSynthesis;
@@ -10,27 +9,29 @@ function speak(text: string) {
   synth.speak(utter);
 }
 
-export function VoiceTherapyBot() {
+export default function VoiceTherapyBot() {
   const [listening, setListening] = useState(false);
   const [status, setStatus] = useState("");
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const [lastUserText, setLastUserText] = useState("");
+  const [lastAIText, setLastAIText] = useState("");
+  const recognitionRef = useRef<any>(null);
 
   const chatMutation = api.openai.chat.useMutation({
     onSuccess: (data) => {
-      setStatus("AI replying...");
-      speak(data.reply); // speak reply instantly!
-      setStatus("Waiting...");
+      setLastAIText(data.reply);
+      setStatus("AI replying…");
+      speak(data.reply);
+      setStatus("");
     },
-    onError: () => setStatus("Error with AI reply."),
+    onError: () => setStatus("Something went wrong, try again."),
   });
 
-  // Start voice recognition
   const startListening = () => {
-    setStatus("Listening...");
+    setStatus("Listening…");
     const SpeechRecognition =
-      (window.SpeechRecognition || window.webkitSpeechRecognition) as typeof window.SpeechRecognition;
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      setStatus("Speech recognition not supported");
+      setStatus("Browser doesn't support speech recognition.");
       return;
     }
     const recognition = new SpeechRecognition();
@@ -41,9 +42,10 @@ export function VoiceTherapyBot() {
     recognition.onerror = () => setStatus("Mic error.");
     recognition.onend = () => setListening(false);
 
-    recognition.onresult = (event) => {
+    recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
-      setStatus(`You said: "${transcript}"`);
+      setLastUserText(transcript);
+      setStatus(`You: "${transcript}"`);
       chatMutation.mutate({ message: transcript });
     };
 
@@ -51,25 +53,44 @@ export function VoiceTherapyBot() {
     recognition.start();
   };
 
-  // Stop voice recognition
   const stopListening = () => {
     recognitionRef.current?.stop();
     setListening(false);
-    setStatus("Stopped listening.");
+    setStatus("");
   };
 
   return (
-    <div className="flex flex-col items-center gap-4 py-6">
-      <button
-        type="button"
-        className={`px-6 py-3 rounded text-white ${listening ? "bg-red-500" : "bg-blue-500"}`}
-        onClick={listening ? stopListening : startListening}
-        disabled={chatMutation.isPending}
-      >
-        {listening ? "Stop Listening" : "Start Talking"}
-      </button>
-      <div className="text-lg">{status}</div>
-      {chatMutation.isPending && <div>AI: Thinking...</div>}
+    <div className="min-h-screen flex flex-col justify-center items-center bg-gradient-to-br from-blue-700 to-indigo-900 p-6">
+      <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-md text-center">
+        <h2 className="text-3xl font-bold mb-4 text-blue-700">Voice Therapy AI</h2>
+        <p className="mb-4 text-gray-600">
+          Tap to speak. Your words will be answered by an AI therapist using the latest OpenAI models.
+        </p>
+        <button
+          type="button"
+          className={`w-full px-6 py-3 rounded-full font-bold text-lg transition ${
+            listening ? "bg-red-500" : "bg-blue-600"
+          } text-white hover:opacity-90 mb-6`}
+          onClick={listening ? stopListening : startListening}
+          disabled={chatMutation.isPending}
+        >
+          {listening ? "Stop Listening" : "Start Speaking"}
+        </button>
+        <div className="mb-2 text-lg text-gray-700 min-h-[40px]">
+          {status}
+        </div>
+        {lastUserText && (
+          <div className="mb-2 italic text-gray-500">You: {lastUserText}</div>
+        )}
+        {chatMutation.isPending ? (
+          <div className="mb-2 text-indigo-600 animate-pulse">AI: Thinking…</div>
+        ) : lastAIText ? (
+          <div className="mb-2 font-semibold text-indigo-800">AI: {lastAIText}</div>
+        ) : null}
+        <div className="mt-6 text-xs text-gray-400">
+          Powered by OpenAI · Secure · Private
+        </div>
+      </div>
     </div>
   );
 }
