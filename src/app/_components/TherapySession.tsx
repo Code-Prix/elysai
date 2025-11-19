@@ -1,18 +1,15 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-// Dependency: Make sure 'retell-client-js-sdk' is installed via npm install
 import { RetellWebClient } from "retell-client-js-sdk"; 
 import { motion, AnimatePresence } from "framer-motion";
 import { Phone, Mic, Square, Heart, Wifi, User, MessageSquare } from "lucide-react";
-// Path Alias: This should resolve to your /src/trpc/react file
 import { api } from "~/trpc/react"; 
 
 type CallState = "idle" | "connecting" | "active" | "ended";
 
 export default function TherapySession() {
   const [activeTab, setActiveTab] = useState<"phone" | "web">("web");
-  // State for Custom Payload
   const [userName, setUserName] = useState("");
   const [userContext, setUserContext] = useState("");
 
@@ -28,7 +25,6 @@ export default function TherapySession() {
         </h1>
       </div>
 
-      {/* Context Inputs (Custom Payload) */}
       <div className="w-full max-w-lg mb-6 grid grid-cols-2 gap-4">
         <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
             <User className="w-5 h-5 text-slate-500" />
@@ -84,7 +80,6 @@ export default function TherapySession() {
   );
 }
 
-// --- Web Session View ---
 function WebSessionView({ userName, userContext }: { userName: string, userContext: string }) {
   const [callState, setCallState] = useState<CallState>("idle");
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
@@ -93,7 +88,6 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
   const startWebCallMutation = api.therapy.createWebCall.useMutation();
 
   useEffect(() => {
-    // Initialize client on mount
     retellClient.current = new RetellWebClient();
 
     retellClient.current.on("call_started", () => {
@@ -123,7 +117,6 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
   const handleStart = async () => {
     setCallState("connecting");
     try {
-      // Pass Payload to Backend
       const { accessToken } = await startWebCallMutation.mutateAsync({
         userName: userName || "Friend",
         userContext: userContext || "General check-in"
@@ -219,7 +212,6 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
   );
 }
 
-// --- Phone Call View ---
 function PhoneCallView({ userName, userContext }: { userName: string, userContext: string }) {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [status, setStatus] = useState<"idle" | "calling" | "success">("idle");
@@ -280,7 +272,7 @@ function PhoneCallView({ userName, userContext }: { userName: string, userContex
           className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-4 text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all"
         />
         <p className="text-xs text-slate-600 ml-1">
-          Note: Phone calls require a paid Retell number. Use 'Live Session' in India.
+          Note: Phone calls require a paid Retell number. Use &apos;Live Session&apos; in India.
         </p>
       </div>
 

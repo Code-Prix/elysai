@@ -1,13 +1,16 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-misused-promises, @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-argument */
 import { WebSocketServer } from "ws";
 import Groq from "groq-sdk";
 import dotenv from "dotenv";
 
 dotenv.config();
 
+// Initialize Groq SDK client
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
+// Set up WebSocket Server on port 8080 to listen for Retell
 const wss = new WebSocketServer({ port: 8080 });
 
 console.log("🧠 Groq Bridge Server running on port 8080");
@@ -15,12 +18,12 @@ console.log("🧠 Groq Bridge Server running on port 8080");
 wss.on("connection", (ws, req) => {
   console.log("Retell connected to the Brain 🧠");
 
-  // Send config immediately
+  // Send initial config to Retell upon connection
   const welcomeConfig = {
     response_type: "config",
     config: {
       auto_reconnect: true,
-      call_details: true, // CRITICAL: Must be true to receive variables
+      call_details: true, // CRITICAL: This is needed to receive dynamic_variables
     },
   };
   ws.send(JSON.stringify(welcomeConfig));
@@ -30,21 +33,21 @@ wss.on("connection", (ws, req) => {
 
     if (event.interaction_type === "response_required") {
       const transcript = event.transcript;
+      // Get the last message from the user
       const lastUserMessage = transcript[transcript.length - 1].content;
       
       console.log("User said:", lastUserMessage);
 
-      // 2. Extract Custom Payload from Retell Event
-      // Retell passes the variables we set in the tRPC router here
+      // Extract Custom Payload (user_name and context)
       const vars = event.call?.retell_llm_dynamic_variables || {};
       const userName = vars.user_name || "Friend";
       const userContext = vars.context || "No context provided";
 
       console.log(`Context: Speaking to ${userName} (${userContext})`);
 
-      // 3. Dynamic System Prompt
+      // Dynamic System Prompt using the custom payload
       const systemPrompt = `
-        You are Serenity, a compassionate therapy AI. 
+        You are Serenity, a compassionate, warm therapy AI. 
         You are speaking with ${userName}.
         Context about their situation: ${userContext}.
         
@@ -54,20 +57,25 @@ wss.on("connection", (ws, req) => {
         - Do not use lists.
       `;
 
+      // FIX: Sanitize transcript to remove Retell-specific fields like 'words'
+      const sanitizedTranscript = transcript.map((msg: any) => ({
+        role: msg.role,
+        content: msg.content
+      }));
+
+      // Call Groq (Llama 3) for streaming response
       const completion = await groq.chat.completions.create({
         messages: [
           { role: "system", content: systemPrompt },
-          ...transcript, 
+          ...sanitizedTranscript, // Use the clean transcript
         ],
         model: "llama-3.3-70b-versatile",
         stream: true, 
       });
 
-      let currentSentence = "";
-      
+      // Stream Groq response back to Retell
       for await (const chunk of completion) {
         const content = chunk.choices[0]?.delta?.content || "";
-        currentSentence += content;
         
         const response = {
           response_type: "response",
@@ -79,6 +87,7 @@ wss.on("connection", (ws, req) => {
         ws.send(JSON.stringify(response));
       }
 
+      // Send content_complete signal
       const endResponse = {
         response_type: "response",
         response_id: event.response_id,
