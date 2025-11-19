@@ -1,5 +1,6 @@
 import { postRouter } from "~/server/api/routers/post";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
+import { therapyRouter } from "~/server/api/routers/therapy";
 import { openaiRouter } from "~/server/api/routers/openai";
 
 /**
@@ -10,6 +11,7 @@ import { openaiRouter } from "~/server/api/routers/openai";
 export const appRouter = createTRPCRouter({
   post: postRouter,
   openai: openaiRouter,
+  therapy: therapyRouter,
 });
 
 // export type definition of API
