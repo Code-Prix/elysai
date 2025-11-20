@@ -13,7 +13,7 @@ const groq = new Groq({
 // Set up WebSocket Server on port 8080 to listen for Retell
 const wss = new WebSocketServer({ port: 8080 });
 
-console.log("🧠 Groq Bridge Server running on port 8080");
+console.log("🧠 Groq Bridge running on port 8080");
 
 wss.on("connection", (ws, req) => {
   console.log("Retell connected to the Brain 🧠");
@@ -34,20 +34,16 @@ wss.on("connection", (ws, req) => {
 
     if (event.interaction_type === "response_required") {
       const transcript = event.transcript;
-      // Get the last message from the user
-      const lastUserMessage = transcript[transcript.length - 1].content;
       
-      console.log("User said:", lastUserMessage);
-
-      // Extract Custom Payload (user_name and context)
+      // 1. Extract Custom Payload (user_name and context)
+      // These come from the Frontend -> Router -> Retell -> Here
       const vars = event.call?.retell_llm_dynamic_variables || {};
-      // Use standard OR operator to avoid nullish coalescing lint error
       const userName = vars.user_name || "Friend";
       const userContext = vars.context || "No context provided";
 
       console.log(`Context: Speaking to ${userName} (${userContext})`);
 
-      // Dynamic System Prompt using the custom payload
+      // 2. Dynamic System Prompt using the custom payload
       const systemPrompt = `
         You are Serenity, a compassionate, warm therapy AI. 
         You are speaking with ${userName}.
@@ -59,45 +55,51 @@ wss.on("connection", (ws, req) => {
         - Do not use lists.
       `;
 
-      // FIX: Sanitize transcript to remove Retell-specific fields like 'words'
+      // 3. FIX: Sanitize transcript AND map 'agent' to 'assistant'
+      // This prevents both "property 'words' unsupported" AND "discriminator 'role' invalid" errors
       const sanitizedTranscript = transcript.map((msg: any) => ({
-        role: msg.role,
+        role: msg.role === "agent" ? "assistant" : msg.role,
         content: msg.content
       }));
 
-      // Call Groq (Llama 3) for streaming response
-      const completion = await groq.chat.completions.create({
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...sanitizedTranscript, // Use the clean transcript
-        ],
-        model: "llama-3.3-70b-versatile",
-        stream: true, 
-      });
+      try {
+        // Call Groq (Llama 3) for streaming response
+        const completion = await groq.chat.completions.create({
+            messages: [
+            { role: "system", content: systemPrompt },
+            ...sanitizedTranscript, // Use the mapped transcript
+            ],
+            model: "llama-3.3-70b-versatile",
+            stream: true, 
+        });
 
-      // Stream Groq response back to Retell
-      for await (const chunk of completion) {
-        const content = chunk.choices[0]?.delta?.content || "";
-        
-        const response = {
-          response_type: "response",
-          response_id: event.response_id,
-          content: content,
-          content_complete: false,
-          end_call: false,
+        // Stream Groq response back to Retell
+        for await (const chunk of completion) {
+            const content = chunk.choices[0]?.delta?.content || "";
+            
+            const response = {
+            response_type: "response",
+            response_id: event.response_id,
+            content: content,
+            content_complete: false,
+            end_call: false,
+            };
+            ws.send(JSON.stringify(response));
+        }
+
+        // Send content_complete signal
+        const endResponse = {
+            response_type: "response",
+            response_id: event.response_id,
+            content: "",
+            content_complete: true,
+            end_call: false,
         };
-        ws.send(JSON.stringify(response));
-      }
+        ws.send(JSON.stringify(endResponse));
 
-      // Send content_complete signal
-      const endResponse = {
-        response_type: "response",
-        response_id: event.response_id,
-        content: "",
-        content_complete: true,
-        end_call: false,
-      };
-      ws.send(JSON.stringify(endResponse));
+      } catch (error) {
+        console.error("Groq API Error:", error);
+      }
     }
   });
 
