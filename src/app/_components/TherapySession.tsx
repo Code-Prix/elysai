@@ -2,76 +2,11 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+// Real Imports - These will work in your local environment
+import { RetellWebClient } from "retell-client-js-sdk";
+import { api } from "~/trpc/react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Mic, Square, Heart, Wifi, User, MessageSquare, FileText, AlertTriangle, Activity } from "lucide-react";
-
-// --- 1. REAL IMPORTS (Uncomment these in your local project) ---
-// import { RetellWebClient } from "retell-client-js-sdk";
-// import { api } from "~/trpc/react";
-
-// --- 2. MOCKS (Delete these in your local project) ---
-// These exist only to make the Preview work without a backend
-const api = {
-  therapy: {
-    createWebCall: {
-      useMutation: () => ({
-        mutateAsync: async (data: any) => {
-          console.log("MOCK: Web call started", data);
-          await new Promise(r => setTimeout(r, 1000));
-          return { accessToken: "mock_token", callId: "mock_call_123" };
-        }
-      })
-    },
-    createPhoneCall: {
-      useMutation: () => ({
-        mutateAsync: async (data: any) => {
-            console.log("MOCK: Phone call initiated", data);
-            await new Promise(r => setTimeout(r, 1000));
-            return { callId: "mock_phone_123" };
-        }
-      })
-    },
-    generateSummary: {
-      useMutation: () => ({
-        mutateAsync: async (data: any) => {
-          console.log("MOCK: Generating summary", data);
-          await new Promise(r => setTimeout(r, 2000));
-          return {
-            emotional_state: "Anxious but hopeful",
-            key_topics: ["Work stress", "Sleep patterns"],
-            risk_flags: ["None"],
-            narrative_summary: "The user expressed concern about upcoming deadlines but showed resilience."
-          };
-        }
-      })
-    }
-  }
-};
-
-class RetellWebClient {
-  listeners: Record<string, Function[]> = {};
-  constructor() { this.listeners = {}; }
-  on(event: string, fn: Function) {
-    if (!this.listeners[event]) this.listeners[event] = [];
-    this.listeners[event].push(fn);
-  }
-  emit(event: string, ...args: any[]) {
-    this.listeners[event]?.forEach(fn => fn(...args));
-  }
-  async startCall(config: any) {
-    console.log("MOCK CLIENT: Connecting...");
-    this.emit("call_started");
-    // Simulate conversation flow
-    setTimeout(() => this.emit("agent_start_talking"), 1000);
-    setTimeout(() => this.emit("agent_stop_talking"), 3000);
-    setTimeout(() => this.emit("agent_start_talking"), 5000);
-    setTimeout(() => this.emit("agent_stop_talking"), 7000);
-  }
-  stopCall() {
-    this.emit("call_ended");
-  }
-}
-// --- END MOCKS ---
 
 type CallState = "idle" | "connecting" | "active" | "summarizing" | "ended";
 
@@ -108,6 +43,7 @@ export default function TherapySession() {
                 className="bg-transparent outline-none w-full text-white placeholder-slate-600"
                 value={userName}
                 onChange={(e) => setUserName(e.target.value)}
+                suppressHydrationWarning
             />
         </div>
         <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
@@ -118,6 +54,7 @@ export default function TherapySession() {
                 className="bg-transparent outline-none w-full text-white placeholder-slate-600"
                 value={userContext}
                 onChange={(e) => setUserContext(e.target.value)}
+                suppressHydrationWarning
             />
         </div>
       </div>
@@ -143,14 +80,14 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
   // Use Ref for callId to avoid triggering re-renders or effect cleanup
   const currentCallIdRef = useRef<string | null>(null);
   
-  // Use 'any' here to support the Mock class, revert to RetellWebClient in prod
-  const retellClient = useRef<any>(null);
+  // Real SDK Client
+  const retellClient = useRef<RetellWebClient | null>(null);
   
   const startWebCallMutation = api.therapy.createWebCall.useMutation();
   const summaryMutation = api.therapy.generateSummary.useMutation();
 
   useEffect(() => {
-    // Initialize client ONCE on mount
+    // Initialize the REAL client ONCE on mount
     retellClient.current = new RetellWebClient();
 
     retellClient.current.on("call_started", () => {
@@ -169,33 +106,36 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
 
     retellClient.current.on("error", (error: any) => {
         console.error("Retell Error:", error);
-        setCallState("idle");
+        // Optional: Set to idle if connection fails completely
+        // setCallState("idle"); 
     });
 
     // Cleanup only on component unmount
     return () => {
       retellClient.current?.stopCall();
     };
-  }, []); // Empty dependency array is CRITICAL to prevent "Start/Stop" loops
+  }, []); 
 
   const handleStart = async () => {
     setCallState("connecting");
     setSummary(null);
     try {
+      // 1. Get Access Token from your T3 Backend (Real API Call)
       const { accessToken, callId } = await startWebCallMutation.mutateAsync({
         userName: userName || "Friend",
         userContext: userContext || "General check-in"
       });
       
-      // Store ID in ref, does not trigger re-render/effect cleanup
       currentCallIdRef.current = callId;
       
       if (!retellClient.current) return;
+      
+      // 2. Connect to Retell (Real WebRTC connection)
       await retellClient.current.startCall({ accessToken });
     } catch (err) {
-      console.error(err);
+      console.error("Connection Failed:", err);
       setCallState("idle");
-      alert("Failed to connect. Check console.");
+      alert("Failed to connect. Ensure your backend is running and keys are set.");
     }
   };
 
@@ -205,17 +145,16 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
 
   const handleGenerateSummary = async () => {
     const callId = currentCallIdRef.current;
-    // For mock purposes, we allow empty callId
-    if (!callId && process.env.NODE_ENV !== 'development') { 
+    if (!callId) {
         setCallState("idle");
         return;
     }
     
     setCallState("summarizing");
     try {
-        // Wait 3s for Retell to finalize transcript logic simulation
-        await new Promise(r => setTimeout(r, 2000));
-        const data = await summaryMutation.mutateAsync({ callId: callId || "mock_id" });
+        // Wait 3s for Retell to finalize transcript (Real logic)
+        await new Promise(r => setTimeout(r, 3000));
+        const data = await summaryMutation.mutateAsync({ callId });
         setSummary(data as SessionSummary);
         setCallState("ended");
     } catch (e) {
