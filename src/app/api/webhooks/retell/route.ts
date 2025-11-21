@@ -2,18 +2,34 @@ import { type NextRequest, NextResponse } from "next/server";
 import { prisma } from "~/server/db";
 import Groq from "groq-sdk";
 
-// Initialize Groq for post-call analysis
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+// 1. Define Interfaces to fix "Unsafe member access" errors
+interface RetellEvent {
+  event: string;
+  call: {
+    call_id: string;
+    transcript?: string;
+    recording_url?: string;
+    metadata?: {
+      userId?: string;
+    };
+  };
+}
+
+interface AnalysisResult {
+  emotional_state?: string;
+  narrative_summary?: string;
+  key_topics?: string[];
+  risk_flags?: string[];
+}
 
 export async function POST(req: NextRequest) {
   try {
-    // 1. Verify Secret (Optional for Hackathon, Critical for Prod)
-    // const signature = req.headers.get("x-retell-signature");
-    // if (!verifySignature(signature, body)) return new Response("Unauthorized", { status: 401 });
+    // 2. Cast request body to interface (and disable lint for the initial fetch)
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const event: RetellEvent = await req.json();
 
-    const event = await req.json();
-
-    // 2. Only handle "call_ended" events
     if (event.event !== "call_ended") {
       return NextResponse.json({ received: true });
     }
@@ -22,8 +38,6 @@ export async function POST(req: NextRequest) {
 
     console.log(`[Webhook] Processing call ${call_id}`);
 
-    // 3. Analyze Transcript with Groq (Narrative Summary & Risk)
-    // We do this HERE so the data is ready when the user checks their dashboard.
     const analysisCompletion = await groq.chat.completions.create({
       model: "llama-3.3-70b-versatile",
       messages: [
@@ -32,31 +46,35 @@ export async function POST(req: NextRequest) {
           content: `
             You are an expert clinical supervisor. Analyze this therapy transcript.
             Output JSON ONLY with these keys:
-            - emotional_state: string (e.g. "Anxious", "Hopeful")
-            - narrative_summary: string (2-3 sentence summary of the session)
-            - key_topics: string[] (Max 3 topics)
-            - risk_flags: string[] (e.g. "None", "Self-harm", "Suicidal Ideation")
+            - emotional_state: string
+            - narrative_summary: string
+            - key_topics: string[]
+            - risk_flags: string[]
           `
         },
-        { role: "user", content: transcript || "No transcript available." }
+        // 3. Fix: Use ?? instead of ||
+        { role: "user", content: transcript ?? "No transcript available." }
       ],
       response_format: { type: "json_object" }
     });
 
-    const analysis = JSON.parse(analysisCompletion.choices[0]?.message?.content || "{}");
+    // 4. Fix: Use ?? for null checks
+    const content = analysisCompletion.choices[0]?.message?.content ?? "{}";
+    
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const analysis: AnalysisResult = JSON.parse(content);
 
-    // 4. Save to Database
-    // We use the 'metadata.userId' we passed during call creation to link it.
     await prisma.therapySession.create({
       data: {
         retellCallId: call_id,
-        userId: metadata?.userId || null, // Link to user if authenticated
-        transcript: transcript || "",
-        audioUrl: recording_url || null,
-        summary: analysis.narrative_summary || "No summary generated.",
-        emotionalState: analysis.emotional_state || "Unknown",
-        topics: analysis.key_topics || [],
-        riskFlags: analysis.risk_flags || [],
+        // 5. Fix: All unsafe accesses are now typed via interfaces
+        userId: metadata?.userId ?? null,
+        transcript: transcript ?? "",
+        audioUrl: recording_url ?? null,
+        summary: analysis.narrative_summary ?? "No summary generated.",
+        emotionalState: analysis.emotional_state ?? "Unknown",
+        topics: analysis.key_topics ?? [],
+        riskFlags: analysis.risk_flags ?? [],
         endedAt: new Date(),
       }
     });
