@@ -13,27 +13,27 @@ const groq = new Groq({
 });
 
 const mapSessionToSummary = (session: any) => {
-    return {
-        // Return BOTH casing styles to be safe
-        emotional_state: session.emotionalState ?? "Neutral",
-        emotionalState: session.emotionalState ?? "Neutral",
-        
-        key_topics: session.topics ?? [],
-        topics: session.topics ?? [],
-        
-        risk_flags: session.riskFlags ?? [],
-        riskFlags: session.riskFlags ?? [],
-        
-        narrative_summary: session.summary ?? "Summary unavailable.",
-        summary: session.summary ?? "Summary unavailable.",
-    };
+  return {
+    // Return BOTH casing styles to be safe
+    emotional_state: session.emotionalState ?? "Neutral",
+    emotionalState: session.emotionalState ?? "Neutral",
+
+    key_topics: session.topics ?? [],
+    topics: session.topics ?? [],
+
+    risk_flags: session.riskFlags ?? [],
+    riskFlags: session.riskFlags ?? [],
+
+    narrative_summary: session.summary ?? "Summary unavailable.",
+    summary: session.summary ?? "Summary unavailable.",
+  };
 }
 
 export const therapyRouter = createTRPCRouter({
   createWebCall: publicProcedure
-    .input(z.object({ 
+    .input(z.object({
       userName: z.string().optional(),
-      userContext: z.string().optional() 
+      userContext: z.string().optional()
     }))
     .mutation(async ({ ctx, input }) => {
       try {
@@ -50,10 +50,10 @@ export const therapyRouter = createTRPCRouter({
             context: input.userContext ?? "User just started the session.",
           },
         });
-        
-        return { 
-            accessToken: webCall.access_token,
-            callId: webCall.call_id 
+
+        return {
+          accessToken: webCall.access_token,
+          callId: webCall.call_id
         };
       } catch (error) {
         console.error("Web Call Error:", error);
@@ -69,33 +69,33 @@ export const therapyRouter = createTRPCRouter({
         const savedSession = await ctx.prisma.therapySession.findUnique({
           where: { retellCallId: input.callId }
         });
-        
+
         if (savedSession) {
           console.log("✅ returning saved summary from DB");
           return mapSessionToSummary(savedSession);
         }
 
         console.log("⚠️ Webhook pending. Generating live summary...");
-        
+
         await new Promise(resolve => setTimeout(resolve, 1500));
         const call = await retell.call.retrieve(input.callId);
-        
+
         if (!call.transcript) {
-            return {
-                emotional_state: "Processing",
-                key_topics: [],
-                risk_flags: [],
-                narrative_summary: "Processing...",
-                // Add camelCase fallbacks for safety
-                emotionalState: "Processing"
-            };
+          return {
+            emotional_state: "Processing",
+            key_topics: [],
+            risk_flags: [],
+            narrative_summary: "Processing...",
+            // Add camelCase fallbacks for safety
+            emotionalState: "Processing"
+          };
         }
 
         const completion = await groq.chat.completions.create({
-            messages: [
+          messages: [
             {
-                role: "system",
-                content: `
+              role: "system",
+              content: `
                 Analyze this therapy transcript.
                 Output JSON:
                 {
@@ -107,56 +107,70 @@ export const therapyRouter = createTRPCRouter({
                 `
             },
             { role: "user", content: call.transcript }
-            ],
-            model: "llama-3.1-8b-instant", 
-            response_format: { type: "json_object" }
+          ],
+          model: "llama-3.1-8b-instant",
+          response_format: { type: "json_object" }
         });
 
         const analysis = JSON.parse(completion.choices[0]?.message?.content || "{}");
 
         // Upsert safely
         await ctx.prisma.therapySession.upsert({
-            where: { retellCallId: input.callId },
-            update: {
-                transcript: call.transcript,
-                audioUrl: call.recording_url,
-                summary: analysis.narrative_summary || "Summary unavailable",
-                emotionalState: analysis.emotional_state || "Unknown",
-                topics: analysis.key_topics || [],
-                riskFlags: analysis.risk_flags || [],
-                endedAt: new Date()
-            }, 
-            create: {
-                retellCallId: input.callId,
-                userId: ctx.session?.user?.id || null,
-                transcript: call.transcript,
-                audioUrl: call.recording_url,
-                summary: analysis.narrative_summary || "Summary unavailable",
-                emotionalState: analysis.emotional_state || "Unknown",
-                topics: analysis.key_topics || [],
-                riskFlags: analysis.risk_flags || [],
-                endedAt: new Date()
-            }
+          where: { retellCallId: input.callId },
+          update: {
+            transcript: call.transcript,
+            audioUrl: call.recording_url,
+            summary: analysis.narrative_summary || "Summary unavailable",
+            emotionalState: analysis.emotional_state || "Unknown",
+            topics: analysis.key_topics || [],
+            riskFlags: analysis.risk_flags || [],
+            endedAt: new Date()
+          },
+          create: {
+            retellCallId: input.callId,
+            userId: ctx.session?.user?.id || null,
+            transcript: call.transcript,
+            audioUrl: call.recording_url,
+            summary: analysis.narrative_summary || "Summary unavailable",
+            emotionalState: analysis.emotional_state || "Unknown",
+            topics: analysis.key_topics || [],
+            riskFlags: analysis.risk_flags || [],
+            endedAt: new Date()
+          }
         });
 
         return {
-            ...analysis,
-            // Polyfill camelCase so frontend is happy regardless
-            emotionalState: analysis.emotional_state,
-            topics: analysis.key_topics,
-            riskFlags: analysis.risk_flags,
-            summary: analysis.narrative_summary
+          ...analysis,
+          // Polyfill camelCase so frontend is happy regardless
+          emotionalState: analysis.emotional_state,
+          topics: analysis.key_topics,
+          riskFlags: analysis.risk_flags,
+          summary: analysis.narrative_summary
         };
 
       } catch (error) {
         console.error("❌ SUMMARY GENERATION FAILED:", error);
         return {
-            emotional_state: "Error",
-            emotionalState: "Error",
-            key_topics: [],
-            risk_flags: [],
-            narrative_summary: "We couldn't generate the summary right now."
+          emotional_state: "Error",
+          emotionalState: "Error",
+          key_topics: [],
+          risk_flags: [],
+          narrative_summary: "We couldn't generate the summary right now."
         };
+      }
+    }),
+
+  testBridge: publicProcedure
+    .mutation(async () => {
+      try {
+        const res = await fetch("http://localhost:8080");
+        if (res.ok) {
+          return { success: true };
+        }
+        return { success: false };
+      } catch (e) {
+        console.error("Bridge Test Failed:", e);
+        return { success: false };
       }
     }),
 });

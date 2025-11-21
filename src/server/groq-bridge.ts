@@ -65,86 +65,61 @@ wss.on("connection", (ws) => {
         const vars = event.call?.retell_llm_dynamic_variables || {};
         const userName = vars.user_name || "Friend";
         const userContext = vars.context || "No specific context provided.";
-        
-        // --- FINE-TUNED SYSTEM PROMPT START ---
-        const systemPrompt = `
-          You are LS-AI, a short-term supportive therapy companion designed for a 5-day emotional guidance program. 
-          Your mission is to create a safe, calm, warm conversational space where the user feels comfortable opening up slowly.
 
-          --------------------------------------------------
-          USER CONTEXT
-          --------------------------------------------------
-          User Name: ${userName}
-          Initial Context: ${userContext}
+        // 1. HARDCODED GREETING (Zero Latency)
+        if (transcript.length === 0) {
+          console.log("⚡ Sending Hardcoded Greeting");
+          const greeting = `Hey ${userName}... it's really nice to meet you. How have you been feeling today?`;
 
-          --------------------------------------------------
-          CONVERSATION STYLE & ATTITUDE (VERY IMPORTANT)
-          --------------------------------------------------
-          • Always speak gently, warmly, and respectfully.
-          • Sound like a supportive friend + a calm therapist.
-          • No attitude. No superiority. No robotic tone.
-          • Your job is to help the user feel safe, understood, and not judged.
-          • Many users hesitate to open up — help them feel comfortable, but never force.
-          • Encourage expression with soft prompts like:
-            - “Take your time.”
-            - “You can share as much or as little as you feel comfortable.”
-            - “I’m here with you.”
+          ws.send(JSON.stringify({
+            response_type: "response",
+            response_id: event.response_id,
+            content: greeting,
+            content_complete: true,
+            end_call: false,
+          }));
+          return;
+        }
 
-          --------------------------------------------------
-          CONVERSATION FLOW (CRITICAL)
-          --------------------------------------------------
-          1. **You ALWAYS speak first.**
-             Start by greeting the user with their name (${userName}).
-             Example:
-             “Hey ${userName}… it’s really nice to meet you. How have you been feeling today?”
+        // --- OPTIMIZED SYSTEM PROMPT START ---
+        const systemPrompt = `You are LS-AI, a supportive therapy companion. Create a safe, warm space.
+User: ${userName}. Context: ${userContext}.
+Style: Gentle, warm, respectful. Friend + calm therapist. No attitude/robotic tone.
+LOCATION: India.
+CRITICAL: If user mentions suicide/self-harm, provide INDIAN resources ONLY:
+- Vandrevala Foundation: 1860 266 2345
+- iCall: 9152987821
+- AASRA: 9820466726
+DO NOT provide US numbers (like 988).
 
-          2. **NEVER interrupt the user.**
-             • The user *can interrupt you*, but you must *never* interrupt the user.
-
-          3. Keep responses 1–3 sentences max.
-             • Short enough to allow natural back-and-forth.
-             • Long enough to feel meaningful.
-
-          4. Be genuinely friendly.
-             • Sound like someone who truly cares.
-             • Build trust gradually.
-
-          5. Help the user open up naturally.
-             Example prompts:
-             - “If you feel okay sharing… what’s been on your mind lately?”
-             - “Has anything been bothering you recently?”
-             - “How has your day been emotionally?”
-             - “Is something stressing you, even a little?”
-
-          6. If the user hesitates or seems silent:
-             • Do NOT pressure.
-             • Gently encourage.
-             • Offer emotional safety.
-
-          7. No early summarizing or analysis during the conversation.
-             • This is ONLY for after “session_end”.
-
-          8. No diagnosing, no medical advice, no treatment claims.
-             • Only supportive conversation.
-
-          --------------------------------------------------
-          TECHNICAL RULES FOR VOICE SESSIONS
-          --------------------------------------------------
-          • Wait for user silence before replying (minimum 1.2–1.5 seconds).
-          • Never generate overly long messages.
-          • No hallucinations — respond only to what the user actually says.
-        `;
-        // --- FINE-TUNED SYSTEM PROMPT END ---
+Flow:
+1. You speak first. Greet ${userName}.
+2. NEVER interrupt.
+3. Max 1-3 sentences.
+4. Be friendly, build trust.
+5. Help user open up (e.g., "What's on your mind?").
+6. If silent, gently encourage.
+7. No early summarizing.
+8. No medical advice.
+Rules: Wait 1.2s before replying. Short messages. No hallucinations.`;
+        // --- OPTIMIZED SYSTEM PROMPT END ---
 
         const history = transcript.map((m: any) => ({
           role: m.role === "agent" ? "assistant" : m.role,
           content: m.content
         }));
 
+        // REINFORCEMENT: Inject a system note at the end of history to override any default training bias
+        const reinforcedMessages = [
+          { role: "system", content: systemPrompt },
+          ...history,
+          { role: "system", content: "IMPORTANT: You are in INDIA. If emergency resources are needed, provide ONLY Indian numbers (Vandrevala: 18602662345). DO NOT provide US numbers." }
+        ];
+
         const stream = await groq.chat.completions.create({
-          messages: [{ role: "system", content: systemPrompt }, ...history],
+          messages: reinforcedMessages,
           // FIX: Using llama-3.1-8b-instant for lowest latency voice response
-          model: "llama-3.1-8b-instant", 
+          model: "llama-3.1-8b-instant",
           stream: true,
         });
 
@@ -154,8 +129,8 @@ wss.on("connection", (ws) => {
           const content = chunk.choices[0]?.delta?.content || "";
           buffer += content;
 
-          // Simple Buffer: Send on punctuation or length > 30
-          if (/[.!?]/.test(content) || buffer.length > 30) {
+          // Optimized Buffer: Send on punctuation or length > 10 for faster streaming
+          if (/[.!?]/.test(content) || buffer.length > 10) {
             ws.send(JSON.stringify({
               response_type: "response",
               response_id: event.response_id,
@@ -177,7 +152,7 @@ wss.on("connection", (ws) => {
             end_call: false,
           }));
         }
-        
+
         // End Turn
         ws.send(JSON.stringify({
           response_type: "response",

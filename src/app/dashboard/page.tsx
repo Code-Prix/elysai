@@ -1,36 +1,48 @@
 // app/dashboard/page.tsx
 import { auth, signOut } from "@/../auth";
+import { TherapySession } from "../_components/TherapySession";
 
 export default async function Dashboard() {
   const session = await auth();
   console.log("SESSION ON DASHBOARD:", session);
 
-  if (!session?.user) {
-    return <p>Not authenticated</p>;
-  }
-
   return (
     <main className="min-h-screen flex items-center justify-center">
       <div>
-        <h1 className="text-2xl font-bold">
-          Hello, {session.user.name ?? "User"}!
+        <h1 className="text-2xl font-bold mb-4">
+          Hello, {session?.user?.name ?? "Guest"}!
         </h1>
-        <p className="text-sm">Email: {session.user.email}</p>
+        {session?.user?.email && (
+          <p className="text-sm mb-8">Email: {session.user.email}</p>
+        )}
+        {!session?.user && (
+          <p className="text-sm mb-8 text-slate-500">You are using Serenity in Guest Mode.</p>
+        )}
 
-        <form
-          action={async () => {
-            "use server";
-            await signOut({ redirectTo: "/login" });
-          }}
-          className="mt-4"
-        >
-          <button
-            type="submit"
-            className="px-4 py-2 bg-red-600 text-white rounded"
+        <TherapySession />
+
+        {session?.user ? (
+          <form
+            action={async () => {
+              "use server";
+              await signOut({ redirectTo: "/login" });
+            }}
+            className="mt-8 text-center"
           >
-            Sign Out
-          </button>
-        </form>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+            >
+              Sign Out
+            </button>
+          </form>
+        ) : (
+          <div className="mt-8 text-center">
+            <a href="/api/auth/signin" className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors">
+              Sign In to Save Progress
+            </a>
+          </div>
+        )}
       </div>
     </main>
   );
