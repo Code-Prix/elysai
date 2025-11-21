@@ -45,8 +45,8 @@ export async function POST(req: NextRequest) {
 
     // 3. Analyze with Groq
     const analysisCompletion = await groq.chat.completions.create({
-      // SPEED FIX: Switched to 8b-8192 for faster summarization
-      model: "llama3-8b-8192",
+      // FIX: Switched to Llama 3.1 8B Swift (Supported Model)
+      model: "llama-3.1-8b-swift",
       messages: [
         {
           role: "system",
@@ -69,7 +69,6 @@ export async function POST(req: NextRequest) {
     const analysis = JSON.parse(rawContent) as AnalysisResult;
 
     // --- FIX FOR P2003 ERROR ---
-    // If userId is "guest" or missing, set it to null.
     let dbUserId: string | null = null;
     
     if (metadata?.userId && metadata.userId !== "guest") {

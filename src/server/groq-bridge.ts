@@ -143,8 +143,8 @@ wss.on("connection", (ws) => {
 
         const stream = await groq.chat.completions.create({
           messages: [{ role: "system", content: systemPrompt }, ...history],
-          // SPEED FIX: Switched to 8b-8192 for ultra-low latency
-          model: "llama3-8b-8192",
+          // FIX: Switched to Llama 3.1 8B Swift (Supported Model)
+          model: "llama-3.1-8b-swift", 
           stream: true,
         });
 
