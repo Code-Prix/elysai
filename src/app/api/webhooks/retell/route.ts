@@ -1,20 +1,25 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { type NextRequest, NextResponse } from "next/server";
 import { prisma } from "~/server/db";
 import Groq from "groq-sdk";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// 1. Define Strict Interfaces
-interface RetellEvent {
+// 1. Define Types for Incoming Data
+interface RetellMetadata {
+  userId?: string;
+}
+
+interface RetellCallData {
+  call_id: string;
+  transcript?: string;
+  recording_url?: string;
+  metadata?: RetellMetadata;
+}
+
+interface RetellWebhookEvent {
   event: string;
-  call: {
-    call_id: string;
-    transcript?: string;
-    recording_url?: string;
-    metadata?: {
-      userId?: string;
-    };
-  };
+  call: RetellCallData;
 }
 
 interface AnalysisResult {
@@ -26,9 +31,9 @@ interface AnalysisResult {
 
 export async function POST(req: NextRequest) {
   try {
-    // 2. Safe Assignment with Type Casting
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const event: RetellEvent = await req.json();
+    // 2. Parse Body (We disable linting just for this casting line)
+    const body = await req.json();
+    const event = body as RetellWebhookEvent;
 
     if (event.event !== "call_ended") {
       return NextResponse.json({ received: true });
@@ -38,8 +43,10 @@ export async function POST(req: NextRequest) {
 
     console.log(`[Webhook] Processing call ${call_id}`);
 
+    // 3. Analyze with Groq
     const analysisCompletion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+      // SPEED FIX: Switched to 8b-8192 for faster summarization
+      model: "llama3-8b-8192",
       messages: [
         {
           role: "system",
@@ -52,33 +59,28 @@ export async function POST(req: NextRequest) {
             - risk_flags: string[]
           `
         },
-        // 3. Safe Access: Use ?? instead of ||
+        // Use nullish coalescing (??) instead of OR (||) for safer typing
         { role: "user", content: transcript ?? "No transcript available." }
       ],
       response_format: { type: "json_object" }
     });
 
-    // 4. Safe Parse
-    const content = analysisCompletion.choices[0]?.message?.content ?? "{}";
-    
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const analysis: AnalysisResult = JSON.parse(content);
+    const rawContent = analysisCompletion.choices[0]?.message?.content ?? "{}";
+    const analysis = JSON.parse(rawContent) as AnalysisResult;
 
-    // --- FIX: Handle Guest Users ---
-    let validUserId: string | null = null;
+    // --- FIX FOR P2003 ERROR ---
+    // If userId is "guest" or missing, set it to null.
+    let dbUserId: string | null = null;
     
-    // Only try to link a user if the ID is not "guest" and actually looks like a real ID
     if (metadata?.userId && metadata.userId !== "guest") {
-       // Optional: verify user exists to be absolutely safe, or trust the ID is valid
-       // For strict safety, we can just set it. If it fails (e.g. user deleted), we catch it.
-       validUserId = metadata.userId;
+        dbUserId = metadata.userId;
     }
 
+    // 4. Save to Database (Strictly Typed)
     await prisma.therapySession.create({
       data: {
         retellCallId: call_id,
-        // If validUserId is null, the relation is skipped (allowed because User? is optional)
-        userId: validUserId,
+        userId: dbUserId, // This will be null for guests, avoiding the constraint error
         transcript: transcript ?? "",
         audioUrl: recording_url ?? null,
         summary: analysis.narrative_summary ?? "No summary generated.",
@@ -94,7 +96,6 @@ export async function POST(req: NextRequest) {
 
   } catch (error) {
     console.error("[Webhook Error]", error);
-    // If it's a Prisma error, log it clearly but don't crash Retell's retry loop if possible
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }

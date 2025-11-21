@@ -98,7 +98,7 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
     retellClient.current.on("call_ended", () => {
       setIsAgentSpeaking(false);
       // Trigger summary generation when call actually ends
-      handleGenerateSummary();
+      void handleGenerateSummary();
     });
 
     retellClient.current.on("agent_start_talking", () => setIsAgentSpeaking(true));
@@ -143,6 +143,7 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
     retellClient.current?.stopCall();
   };
 
+  // --- POLLING LOGIC ---
   const handleGenerateSummary = async () => {
     const callId = currentCallIdRef.current;
     if (!callId) {
@@ -151,16 +152,31 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
     }
     
     setCallState("summarizing");
-    try {
-        // Wait 3s for Retell to finalize transcript (Real logic)
-        await new Promise(r => setTimeout(r, 3000));
+    
+    // Poll for summary (max 5 attempts, 2s interval)
+    let attempts = 0;
+    const maxAttempts = 5;
+    
+    const poll = async () => {
+      try {
         const data = await summaryMutation.mutateAsync({ callId });
-        setSummary(data as SessionSummary);
-        setCallState("ended");
-    } catch (e) {
+        
+        // Check if we got valid data or just a "Processing" placeholder
+        if (data.emotional_state === "Processing" && attempts < maxAttempts) {
+          attempts++;
+          setTimeout(() => void poll(), 2000); // Retry after 2s
+        } else {
+          setSummary(data as SessionSummary);
+          setCallState("ended");
+        }
+      } catch (e) {
         console.error("Summary failed", e);
         setCallState("idle");
-    }
+      }
+    };
+
+    // Start polling
+    void poll();
   };
 
   return (
