@@ -19,8 +19,11 @@ model User {
   accounts       Account[]
   sessions       Session[]
   
-  // Add this for the relation to Post model:
-  posts          Post[]        // <-- Relation: one user has many posts
+  // FIX: Add the missing inverse relation for Posts
+  posts          Post[]    
+
+  // Add this relation for Therapy Sessions
+  therapySessions TherapySession[]
 }
 
 model Account {
@@ -62,7 +65,29 @@ model VerificationToken {
 model Post {
   id          String   @id @default(uuid())
   name        String
+  // This relation requires 'posts' to exist on User
   createdBy   User     @relation(fields: [createdById], references: [id])
   createdById String
   createdAt   DateTime @default(now())
+}
+
+// NEW: The Therapy Session Store
+model TherapySession {
+  id              String   @id @default(cuid())
+  retellCallId    String   @unique
+  
+  userId          String?
+  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  transcript      String   @db.Text
+  audioUrl        String?
+  
+  // Analysis Data
+  summary         String   @db.Text
+  emotionalState  String?
+  riskFlags       String[]
+  topics          String[]
+  
+  startedAt       DateTime @default(now())
+  endedAt         DateTime?
 }

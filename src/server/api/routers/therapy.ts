@@ -1,11 +1,10 @@
 /* eslint-disable */
 import { z } from "zod";
-import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
+import { createTRPCRouter, publicProcedure, protectedProcedure } from "~/server/api/trpc";
 import Retell from "retell-sdk";
 import Groq from "groq-sdk";
 
-// Initialize SDKs
-// Ensure RETELL_API_KEY and GROQ_API_KEY are in your .env file
+// Initialize SDKs with Environment Variables
 const retell = new Retell({
   apiKey: process.env.RETELL_API_KEY!,
 });
@@ -15,44 +14,32 @@ const groq = new Groq({
 });
 
 export const therapyRouter = createTRPCRouter({
-  // 1. Phone Call Endpoint (Required by PhoneCallView)
-  createPhoneCall: publicProcedure
-    .input(z.object({ 
-      userPhoneNumber: z.string(),
-      userName: z.string().optional(),
-      userContext: z.string().optional() 
-    }))
-    .mutation(async ({ input }) => {
-      try {
-        const call = await retell.call.createPhoneCall({
-          from_number: process.env.RETELL_PHONE_NUMBER!,
-          to_number: input.userPhoneNumber,
-          override_agent_id: process.env.RETELL_AGENT_ID,
-          retell_llm_dynamic_variables: {
-            user_name: input.userName ?? "Friend",
-            context: input.userContext ?? "New session",
-          },
-        });
-        return { callId: call.call_id };
-      } catch (error) {
-        console.error("Phone Call Error:", error);
-        throw new Error("Failed to initiate phone call.");
-      }
-    }),
-
-  // 2. Web Call Endpoint (Required by WebSessionView)
+  // --------------------------------------------------------------------------
+  // 1. START WEB CALL
+  // --------------------------------------------------------------------------
+  // We use publicProcedure to allow guests, but we capture session.user.id if it exists.
   createWebCall: publicProcedure
     .input(z.object({ 
       userName: z.string().optional(),
       userContext: z.string().optional() 
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
+        // Identify the user (or mark as guest)
+        const userId = ctx.session?.user?.id || "guest";
+
         const webCall = await retell.call.createWebCall({
           agent_id: process.env.RETELL_AGENT_ID!,
+          
+          // CRITICAL: Pass metadata so the Webhook can link this call to the user later
+          metadata: {
+            userId: userId,
+          },
+          
+          // Inject context into the LLM for the "Fine-Tuning" effect
           retell_llm_dynamic_variables: {
             user_name: input.userName ?? "Friend",
-            context: input.userContext ?? "User just started the app.",
+            context: input.userContext ?? "User just started the session.",
           },
         });
         
@@ -66,37 +53,60 @@ export const therapyRouter = createTRPCRouter({
       }
     }),
 
-  // 3. Summary Endpoint (Required by handleGenerateSummary)
+  // --------------------------------------------------------------------------
+  // 2. GENERATE / RETRIEVE SUMMARY
+  // --------------------------------------------------------------------------
+  // This is called by the frontend when the call ends.
   generateSummary: publicProcedure
     .input(z.object({ callId: z.string() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
-        // Wait briefly to ensure Retell has finalized the transcript
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // STRATEGY A: Check if the Webhook already saved it (Fastest & Cheapest)
+        const savedSession = await ctx.prisma.therapySession.findUnique({
+          where: { retellCallId: input.callId }
+        });
         
+        if (savedSession) {
+          console.log("✅ returning saved summary from DB");
+          return {
+              emotional_state: savedSession.emotionalState ?? "Neutral",
+              key_topics: savedSession.topics,
+              risk_flags: savedSession.riskFlags,
+              narrative_summary: savedSession.summary
+          };
+        }
+
+        // STRATEGY B: Webhook hasn't arrived yet. Generate Live. (Fallback)
+        console.log("⚠️ Webhook pending. Generating live summary...");
+        
+        // 1. Fetch Transcript from Retell
+        // We wait a moment to ensure Retell has processed the audio
+        await new Promise(resolve => setTimeout(resolve, 1500));
         const call = await retell.call.retrieve(input.callId);
         
         if (!call.transcript) {
             return {
-                emotional_state: "Unknown",
+                emotional_state: "Processing",
                 key_topics: [],
                 risk_flags: [],
-                narrative_summary: "No transcript available."
+                narrative_summary: "The session transcript is still processing. Please refresh in a moment."
             };
         }
 
-        // Analyze with Groq
+        // 2. Analyze with Groq (Llama 3)
         const completion = await groq.chat.completions.create({
             messages: [
             {
                 role: "system",
                 content: `
-                Analyze this therapy session transcript.
-                Output a JSON object with:
-                - emotional_state (string)
-                - key_topics (array of strings)
-                - risk_flags (array of strings, e.g. "None" or "Self-harm")
-                - narrative_summary (string, 2 sentences)
+                You are an expert clinical supervisor. Analyze this therapy transcript.
+                Output a JSON object with EXACTLY this structure:
+                {
+                  "emotional_state": "string (e.g. Anxious)",
+                  "key_topics": ["string", "string"],
+                  "risk_flags": ["string" (e.g. None, Self-harm)],
+                  "narrative_summary": "string (2 sentences max)"
+                }
                 `
             },
             { role: "user", content: call.transcript }
@@ -105,10 +115,37 @@ export const therapyRouter = createTRPCRouter({
             response_format: { type: "json_object" }
         });
 
-        return JSON.parse(completion.choices[0]?.message?.content || "{}");
+        const analysis = JSON.parse(completion.choices[0]?.message?.content || "{}");
+
+        // 3. Save to DB immediately (Don't wait for webhook anymore)
+        // This prevents double-billing or missing data if the webhook fails
+        await ctx.prisma.therapySession.upsert({
+            where: { retellCallId: input.callId },
+            update: {}, // If exists, do nothing
+            create: {
+                retellCallId: input.callId,
+                userId: ctx.session?.user?.id || null,
+                transcript: call.transcript,
+                audioUrl: call.recording_url,
+                summary: analysis.narrative_summary || "Summary unavailable",
+                emotionalState: analysis.emotional_state || "Unknown",
+                topics: analysis.key_topics || [],
+                riskFlags: analysis.risk_flags || [],
+                endedAt: new Date()
+            }
+        });
+
+        return analysis;
+
       } catch (error) {
         console.error("Summary Error:", error);
-        throw new Error("Failed to generate summary.");
+        // Return a "graceful failure" object so the UI doesn't crash
+        return {
+            emotional_state: "Error",
+            key_topics: [],
+            risk_flags: [],
+            narrative_summary: "We couldn't generate the summary right now. Please try again later."
+        };
       }
     }),
 });
