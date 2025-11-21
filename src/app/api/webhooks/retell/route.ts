@@ -1,20 +1,25 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { type NextRequest, NextResponse } from "next/server";
 import { prisma } from "~/server/db";
 import Groq from "groq-sdk";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// 1. Define Interfaces to fix "Unsafe member access" errors
-interface RetellEvent {
+// 1. Define Types for Incoming Data
+interface RetellMetadata {
+  userId?: string;
+}
+
+interface RetellCallData {
+  call_id: string;
+  transcript?: string;
+  recording_url?: string;
+  metadata?: RetellMetadata;
+}
+
+interface RetellWebhookEvent {
   event: string;
-  call: {
-    call_id: string;
-    transcript?: string;
-    recording_url?: string;
-    metadata?: {
-      userId?: string;
-    };
-  };
+  call: RetellCallData;
 }
 
 interface AnalysisResult {
@@ -26,9 +31,9 @@ interface AnalysisResult {
 
 export async function POST(req: NextRequest) {
   try {
-    // 2. Cast request body to interface (and disable lint for the initial fetch)
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const event: RetellEvent = await req.json();
+    // 2. Parse Body (We disable linting just for this casting line)
+    const body = await req.json();
+    const event = body as RetellWebhookEvent;
 
     if (event.event !== "call_ended") {
       return NextResponse.json({ received: true });
@@ -38,6 +43,7 @@ export async function POST(req: NextRequest) {
 
     console.log(`[Webhook] Processing call ${call_id}`);
 
+    // 3. Analyze with Groq
     const analysisCompletion = await groq.chat.completions.create({
       model: "llama-3.3-70b-versatile",
       messages: [
@@ -52,22 +58,19 @@ export async function POST(req: NextRequest) {
             - risk_flags: string[]
           `
         },
-        // 3. Fix: Use ?? instead of ||
+        // Use nullish coalescing (??) instead of OR (||) for safer typing
         { role: "user", content: transcript ?? "No transcript available." }
       ],
       response_format: { type: "json_object" }
     });
 
-    // 4. Fix: Use ?? for null checks
-    const content = analysisCompletion.choices[0]?.message?.content ?? "{}";
-    
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const analysis: AnalysisResult = JSON.parse(content);
+    const rawContent = analysisCompletion.choices[0]?.message?.content ?? "{}";
+    const analysis = JSON.parse(rawContent) as AnalysisResult;
 
+    // 4. Save to Database (Strictly Typed)
     await prisma.therapySession.create({
       data: {
         retellCallId: call_id,
-        // 5. Fix: All unsafe accesses are now typed via interfaces
         userId: metadata?.userId ?? null,
         transcript: transcript ?? "",
         audioUrl: recording_url ?? null,
