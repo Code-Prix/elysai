@@ -35,14 +35,26 @@ wss.on("connection", (ws) => {
   };
   ws.send(JSON.stringify(config));
 
+  // CRITICAL FIX 1: Handle Standard WebSocket Pings (Opcode 0x9)
+  ws.on("ping", () => {
+    console.log("🏓 Received Standard PING -> Sending PONG");
+    ws.pong();
+  });
+
   ws.on("message", async (data) => {
     try {
       const raw = data.toString();
-      
-      // IGNORE ALL PINGS (Do not reply manually)
-      if (raw === "ping" || raw.includes('"type":"ping"')) return;
-
       const event = JSON.parse(raw);
+
+      // CRITICAL FIX 2: Handle Retell's Application-Layer Ping
+      if (event.interaction_type === "ping_pong") {
+        console.log("🏓 Received Retell JSON PING -> Sending PONG");
+        ws.send(JSON.stringify({
+          response_type: "ping_pong",
+          timestamp: event.timestamp
+        }));
+        return;
+      }
 
       // Handle Response Request
       if (event.interaction_type === "response_required") {
@@ -110,7 +122,7 @@ wss.on("connection", (ws) => {
         }));
       }
     } catch (err) {
-      console.error("⚠️ Error:", err);
+      console.error("⚠️ Error processing message:", err);
     }
   });
 
