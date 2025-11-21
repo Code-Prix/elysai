@@ -143,8 +143,8 @@ wss.on("connection", (ws) => {
 
         const stream = await groq.chat.completions.create({
           messages: [{ role: "system", content: systemPrompt }, ...history],
-          // FIX: Switched to a known supported model
-          model: "llama-3.3-70b-versatile", 
+          // FIX: Using llama-3.1-8b-instant for lowest latency voice response
+          model: "llama-3.1-8b-instant", 
           stream: true,
         });
 

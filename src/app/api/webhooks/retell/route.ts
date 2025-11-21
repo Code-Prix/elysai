@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
 
     // 3. Analyze with Groq
     const analysisCompletion = await groq.chat.completions.create({
-      // FIX: Switched to a known supported model
+      // FIX: Using llama-3.3-70b-versatile for higher quality analysis
       model: "llama-3.3-70b-versatile",
       messages: [
         {
