@@ -12,52 +12,34 @@ if (!process.env.GROQ_API_KEY) {
 }
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const server = createServer();
+const server = createServer((req, res) => {
+  // Health check for Railway
+  res.writeHead(200);
+  res.end("Bridge Active");
+});
+
 const wss = new WebSocketServer({ server });
 
-// --- 1. AGGRESSIVE HEARTBEAT ---
-// Retell expects a PONG within 5-10 seconds.
-// We will log these to prove the connection is alive.
-function heartbeat(this: WebSocket) {
-  // @ts-ignore
-  this.isAlive = true;
-  console.log("💓 Pong sent to Retell");
-}
+// Heartbeat State
+const clients = new Map<WebSocket, boolean>();
 
 const interval = setInterval(() => {
   wss.clients.forEach((ws) => {
-    // @ts-ignore
-    if (ws.isAlive === false) {
-        console.log("💀 Client dead, terminating");
-        return ws.terminate();
-    }
-    // @ts-ignore
-    ws.isAlive = false;
+    if (clients.get(ws) === false) return ws.terminate();
+    clients.set(ws, false);
     ws.ping();
   });
-}, 15000); // Check every 15s
+}, 30000);
 
 wss.on("close", () => clearInterval(interval));
 
-// --- 2. HANDLE PORT CONFLICTS ---
-server.on("error", (err: any) => {
-  if (err.code === "EADDRINUSE") {
-    console.error("❌ FATAL: Port busy. Attempting restart...");
-    setTimeout(() => {
-      server.close();
-      server.listen(process.env.PORT || 8080);
-    }, 1000);
-  }
-});
-
 wss.on("connection", (ws) => {
   console.log("✅ Retell Connected");
+  clients.set(ws, true);
   
-  // @ts-ignore
-  ws.isAlive = true;
-  ws.on("pong", heartbeat);
+  ws.on("pong", () => clients.set(ws, true));
 
-  // Send config immediately
+  // Send Config Immediately
   ws.send(JSON.stringify({
     response_type: "config",
     config: { 
@@ -70,22 +52,28 @@ wss.on("connection", (ws) => {
     try {
       const rawMsg = data.toString();
       
-      // 3. MANUAL PING HANDLER
-      // Sometimes Retell sends a literal "ping" message text
-      if (rawMsg === "ping" || rawMsg.includes("ping")) {
-        ws.send(JSON.stringify({ type: "pong" }));
-        console.log("💓 Manual Pong sent");
-        return;
+      // FIX 1: Handle Ping without breaking Retell Parser
+      // Retell sometimes sends literal "ping". We must ignore or handle strictly.
+      if (rawMsg === "ping") {
+        // Do NOT send {"type": "pong"} if Retell expects response objects.
+        // Just log it and keep connection alive via standard ws.ping()
+        console.log("💓 Received Text Ping");
+        return; 
       }
 
       const event = JSON.parse(rawMsg);
 
+      // FIX 2: Handle JSON Ping
+      if (event.type === 'ping') {
+        console.log("💓 Received JSON Ping");
+        return;
+      }
+
       if (event.interaction_type === "response_required") {
         const transcript = event.transcript;
         const vars = event.call?.retell_llm_dynamic_variables || {};
-        const userMsg = transcript[transcript.length - 1]?.content || "";
         
-        console.log(`🗣️ User: ${userMsg}`);
+        console.log(`🗣️ User: ${transcript[transcript.length - 1]?.content}`);
 
         const systemPrompt = `
           You are Serenity, a supportive therapy AI.
@@ -111,14 +99,9 @@ wss.on("connection", (ws) => {
           const content = chunk.choices[0]?.delta?.content || "";
           buffer += content;
 
-          // 4. SAFETY CHECK
-          if (ws.readyState !== WebSocket.OPEN) {
-              console.log("⚠️ Socket closed during stream");
-              break;
-          }
+          if (ws.readyState !== WebSocket.OPEN) break;
 
-          // 5. OPTIMIZED BUFFERING
-          // Sends chunk if it ends with punctuation OR is getting too long
+          // FIX 3: Strict Protocol Response
           if (/[.!?]/.test(content) || buffer.length > 50) {
             ws.send(JSON.stringify({
               response_type: "response",
@@ -156,18 +139,22 @@ wss.on("connection", (ws) => {
     }
   });
 
-  ws.on("close", () => console.log("❌ Retell Disconnected"));
+  ws.on("close", () => {
+    console.log("❌ Retell Disconnected");
+    clients.delete(ws);
+  });
+  
   ws.on("error", (e) => console.error("Socket Error:", e));
 });
 
+// Start Server
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
   console.log(`🧠 Bridge Active on port ${PORT}`);
 });
 
-// Graceful Shutdown
-const shutdown = () => {
+// Handle Shutdown Signal from Railway
+process.on("SIGTERM", () => {
+  console.log("🛑 SIGTERM received. Shutting down...");
   server.close(() => process.exit(0));
-};
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+});
