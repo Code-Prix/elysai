@@ -15,7 +15,6 @@ const groq = new Groq({
 
 // Helper function to map Prisma output to expected API/Frontend format (snake_case)
 const mapSessionToSummary = (session: any) => {
-    // Note: session is typically camelCase from Prisma. Frontend/Groq API expect snake_case.
     return {
         emotional_state: session.emotionalState ?? "Neutral",
         key_topics: session.topics ?? [],
@@ -29,7 +28,6 @@ export const therapyRouter = createTRPCRouter({
   // --------------------------------------------------------------------------
   // 1. START WEB CALL
   // --------------------------------------------------------------------------
-  // We use publicProcedure to allow guests, but we capture session.user.id if it exists.
   createWebCall: publicProcedure
     .input(z.object({ 
       userName: z.string().optional(),
@@ -37,21 +35,21 @@ export const therapyRouter = createTRPCRouter({
     }))
     .mutation(async ({ ctx, input }) => {
       try {
-        // Identify the user (or mark as guest)
         const userId = ctx.session?.user?.id || "guest";
+        const userName = input.userName || "Friend";
 
         const webCall = await retell.call.createWebCall({
           agent_id: process.env.RETELL_AGENT_ID!,
           
-          // CRITICAL: Pass metadata so the Webhook can link this call to the user later
           metadata: {
             userId: userId,
           },
           
-          // Inject context into the LLM for the "Fine-Tuning" effect
           retell_llm_dynamic_variables: {
-            user_name: input.userName ?? "Friend",
+            user_name: userName,
             context: input.userContext ?? "User just started the session.",
+            // NEW: Explicit instruction for the first turn
+            start_instruction: `Say exactly: "Hi ${userName}, how are you doing today?"`
           },
         });
         
@@ -65,35 +63,27 @@ export const therapyRouter = createTRPCRouter({
       }
     }),
 
-  // --------------------------------------------------------------------------
-  // 2. GENERATE / RETRIEVE SUMMARY
-  // --------------------------------------------------------------------------
-  // This is called by the frontend when the call ends.
+  // ... (generateSummary remains the same as previous step) ...
+  // Copy the generateSummary function from the previous working version here
   generateSummary: publicProcedure
     .input(z.object({ callId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       try {
-        // STRATEGY A: Check if the Webhook already saved it (Fastest & Cheapest)
         const savedSession = await ctx.prisma.therapySession.findUnique({
           where: { retellCallId: input.callId }
         });
         
         if (savedSession) {
           console.log("✅ returning saved summary from DB");
-          // FIX HERE: Map Prisma's camelCase output to frontend's snake_case expectation
           return mapSessionToSummary(savedSession);
         }
 
-        // STRATEGY B: Webhook hasn't arrived yet. Generate Live. (Fallback)
         console.log("⚠️ Webhook pending. Generating live summary...");
         
-        // 1. Fetch Transcript from Retell
-        // We wait a moment to ensure Retell has processed the audio
         await new Promise(resolve => setTimeout(resolve, 1500));
         const call = await retell.call.retrieve(input.callId);
         
         if (!call.transcript) {
-            // This return needs to match the structure the frontend checks for "Processing"
             return {
                 emotional_state: "Processing",
                 key_topics: [],
@@ -102,7 +92,6 @@ export const therapyRouter = createTRPCRouter({
             };
         }
 
-        // 2. Analyze with Groq (Llama 3)
         const completion = await groq.chat.completions.create({
             messages: [
             {
@@ -120,20 +109,15 @@ export const therapyRouter = createTRPCRouter({
             },
             { role: "user", content: call.transcript }
             ],
-            // FIX: Using llama-3.3-70b-versatile for consistency with webhook
             model: "llama-3.3-70b-versatile", 
             response_format: { type: "json_object" }
         });
 
-        // Groq output is already in snake_case (emotional_state, key_topics)
         const analysis = JSON.parse(completion.choices[0]?.message?.content || "{}");
 
-        // 3. Save to DB immediately 
         await ctx.prisma.therapySession.upsert({
             where: { retellCallId: input.callId },
             update: {
-                // If this upsert fails, the webhook will try again later.
-                // We ensure only actual DB fields are used (camelCase)
                 transcript: call.transcript,
                 audioUrl: call.recording_url,
                 summary: analysis.narrative_summary || "Summary unavailable",
@@ -155,12 +139,10 @@ export const therapyRouter = createTRPCRouter({
             }
         });
 
-        // Return the snake_case JSON directly to the frontend
         return analysis;
 
       } catch (error) {
         console.error("Summary Error:", error);
-        // Return a "graceful failure" object so the UI doesn't crash
         return {
             emotional_state: "Error",
             key_topics: [],

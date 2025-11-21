@@ -16,7 +16,6 @@ interface SessionSummary {
   narrative_summary: string;
 }
 
-// CHANGED: Removed 'default' keyword
 export function TherapySession() {
   const [userName, setUserName] = useState("");
   const [userContext, setUserContext] = useState("");
@@ -76,9 +75,9 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
   const [callState, setCallState] = useState<CallState>("idle");
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
   const [summary, setSummary] = useState<SessionSummary | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
   const currentCallIdRef = useRef<string | null>(null);
-  
   const retellClient = useRef<RetellWebClient | null>(null);
   
   const startWebCallMutation = api.therapy.createWebCall.useMutation();
@@ -90,6 +89,7 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
     retellClient.current.on("call_started", () => {
       setCallState("active");
       setIsAgentSpeaking(true); 
+      setErrorMsg(null);
     });
     
     retellClient.current.on("call_ended", () => {
@@ -102,6 +102,7 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
 
     retellClient.current.on("error", (error: any) => {
         console.error("Retell Error:", error);
+        setErrorMsg("Connection error. Please try again.");
     });
 
     return () => {
@@ -112,6 +113,7 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
   const handleStart = async () => {
     setCallState("connecting");
     setSummary(null);
+    setErrorMsg(null);
     try {
       const { accessToken, callId } = await startWebCallMutation.mutateAsync({
         userName: userName || "Friend",
@@ -126,7 +128,7 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
     } catch (err) {
       console.error("Connection Failed:", err);
       setCallState("idle");
-      alert("Failed to connect. Ensure your backend is running and keys are set.");
+      setErrorMsg("Failed to start session. Check console.");
     }
   };
 
@@ -144,21 +146,29 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
     setCallState("summarizing");
     
     let attempts = 0;
-    const maxAttempts = 5;
+    // Increase attempts to ensure we catch the webhook write
+    const maxAttempts = 10; 
     
     const poll = async () => {
       try {
+        console.log(`[Polling] Checking summary attempt ${attempts + 1}...`);
         const data = await summaryMutation.mutateAsync({ callId });
         
+        console.log("[Polling] Response:", data);
+
         if (data.emotional_state === "Processing" && attempts < maxAttempts) {
           attempts++;
           setTimeout(() => void poll(), 2000);
+        } else if (data.emotional_state === "Error") {
+           setErrorMsg("Could not analyze session.");
+           setCallState("idle");
         } else {
           setSummary(data as SessionSummary);
           setCallState("ended");
         }
       } catch (e) {
         console.error("Summary failed", e);
+        setErrorMsg("Error retrieving summary.");
         setCallState("idle");
       }
     };
@@ -173,6 +183,13 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
       className="flex flex-col items-center w-full"
       suppressHydrationWarning
     >
+      {/* ERROR MESSAGE */}
+      {errorMsg && (
+        <div className="mb-4 p-3 bg-red-900/50 border border-red-800 rounded text-red-200 text-sm">
+            {errorMsg}
+        </div>
+      )}
+
       {/* 1. SUMMARY VIEW */}
       {callState === "ended" && summary && (
          <motion.div 
@@ -200,12 +217,12 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
                 <div>
                     <span className="text-slate-500 text-xs uppercase tracking-wider font-bold block mb-1">Topics</span>
                     <div className="flex flex-wrap gap-2">
-                        {summary.key_topics.map((t, i) => (
+                        {summary.key_topics && summary.key_topics.map((t, i) => (
                             <span key={i} className="px-2 py-1 bg-slate-700 rounded text-xs">{t}</span>
                         ))}
                     </div>
                 </div>
-                {summary.risk_flags.length > 0 && !summary.risk_flags.includes("None") && (
+                {summary.risk_flags && summary.risk_flags.length > 0 && !summary.risk_flags.includes("None") && (
                     <div>
                         <span className="text-red-500 text-xs uppercase tracking-wider font-bold flex items-center gap-1 mb-1">
                             <AlertTriangle className="w-3 h-3" /> Risks
@@ -221,7 +238,11 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
            </div>
 
            <button 
-             onClick={() => setCallState("idle")}
+             onClick={() => {
+                setCallState("idle");
+                setSummary(null);
+                setErrorMsg(null);
+             }}
              className="w-full mt-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-colors text-white"
            >
              Start New Session
@@ -234,6 +255,7 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
          <div className="text-center py-10 space-y-4">
             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto" />
             <p className="text-indigo-300 animate-pulse">Generating insights...</p>
+            <p className="text-xs text-slate-500">This may take a moment...</p>
          </div>
       )}
 
