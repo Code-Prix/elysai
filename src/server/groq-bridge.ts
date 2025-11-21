@@ -13,7 +13,7 @@ if (!process.env.GROQ_API_KEY) {
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// 1. HTTP Server (Health Check)
+// 1. Simple HTTP Server (Passes Health Checks)
 const server = createServer((req, res) => {
   res.writeHead(200);
   res.end("OK");
@@ -21,26 +21,11 @@ const server = createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
-// 2. Global Error Handler (Prevent Crash)
-process.on('uncaughtException', (err) => {
-  console.error('🔥 Uncaught Exception:', err);
-});
-
-// 3. Aggressive Keep-Alive
-const keepAliveInterval = setInterval(() => {
-  wss.clients.forEach((ws) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.ping(); 
-    }
-  });
-}, 3000); // Ping every 3s
-
-wss.on("close", () => clearInterval(keepAliveInterval));
-
+// 2. Connection Logic
 wss.on("connection", (ws) => {
   console.log("✅ Client Connected");
 
-  // Send Config Immediately
+  // Send Config
   const config = {
     response_type: "config",
     config: {
@@ -54,18 +39,15 @@ wss.on("connection", (ws) => {
     try {
       const raw = data.toString();
       
-      // Ignore raw Pings
-      if (raw === "ping") return;
+      // IGNORE ALL PINGS (Do not reply manually)
+      if (raw === "ping" || raw.includes('"type":"ping"')) return;
 
       const event = JSON.parse(raw);
 
-      // Ignore JSON Pings
-      if (event.type === 'ping') return;
-
-      // Log Interactions
+      // Handle Response Request
       if (event.interaction_type === "response_required") {
         const transcript = event.transcript;
-        const lastMsg = transcript[transcript.length - 1]?.content || "Unknown";
+        const lastMsg = transcript[transcript.length - 1]?.content || "";
         console.log(`🗣️ User: "${lastMsg}"`);
 
         const vars = event.call?.retell_llm_dynamic_variables || {};
@@ -91,12 +73,10 @@ wss.on("connection", (ws) => {
         let buffer = "";
 
         for await (const chunk of stream) {
-          if (ws.readyState !== WebSocket.OPEN) break;
-
           const content = chunk.choices[0]?.delta?.content || "";
           buffer += content;
 
-          // Safe Buffering: Send on punctuation OR length > 30
+          // Simple Buffer: Send on punctuation or length > 30
           if (/[.!?]/.test(content) || buffer.length > 30) {
             ws.send(JSON.stringify({
               response_type: "response",
@@ -110,42 +90,40 @@ wss.on("connection", (ws) => {
         }
 
         // Flush
-        if (ws.readyState === WebSocket.OPEN) {
-          if (buffer.length > 0) {
-            ws.send(JSON.stringify({
-              response_type: "response",
-              response_id: event.response_id,
-              content: buffer,
-              content_complete: false,
-              end_call: false,
-            }));
-          }
-          
+        if (buffer.length > 0) {
           ws.send(JSON.stringify({
             response_type: "response",
             response_id: event.response_id,
-            content: "",
-            content_complete: true,
+            content: buffer,
+            content_complete: false,
             end_call: false,
           }));
         }
+        
+        // End Turn
+        ws.send(JSON.stringify({
+          response_type: "response",
+          response_id: event.response_id,
+          content: "",
+          content_complete: true,
+          end_call: false,
+        }));
       }
     } catch (err) {
-      console.error("⚠️ Message Error:", err);
+      console.error("⚠️ Error:", err);
     }
   });
 
-  ws.on("close", () => console.log("❌ Client Disconnected"));
   ws.on("error", (e) => console.error("❌ Socket Error:", e));
 });
 
+// 3. Listen on Dynamic Port
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
   console.log(`🚀 Bridge running on port ${PORT}`);
 });
 
-// Handle Shutdown
+// 4. Handle Shutdown Cleanly
 process.on("SIGTERM", () => {
-  console.log("🛑 SIGTERM received. Closing server...");
   server.close(() => process.exit(0));
 });
