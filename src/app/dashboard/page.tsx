@@ -1,8 +1,9 @@
 // app/dashboard/page.tsx
-import { auth, signOut } from "@/../auth";
+import Link from "next/link";
+import { auth, signOut } from "auth";
 import { TherapySession } from "../_components/TherapySession";
 
-export default async function Dashboard() {
+export default async function DashboardPage() {
   const session = await auth();
   console.log("SESSION ON DASHBOARD:", session);
 
@@ -38,9 +39,9 @@ export default async function Dashboard() {
           </form>
         ) : (
           <div className="mt-8 text-center">
-            <a href="/api/auth/signin" className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors">
+            <Link href="/api/auth/signin" className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors">
               Sign In to Save Progress
-            </a>
+            </Link>
           </div>
         )}
       </div>
