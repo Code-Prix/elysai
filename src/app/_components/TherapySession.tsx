@@ -2,7 +2,6 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-// Real Imports - These will work in your local environment
 import { RetellWebClient } from "retell-client-js-sdk";
 import { api } from "~/trpc/react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -17,7 +16,8 @@ interface SessionSummary {
   narrative_summary: string;
 }
 
-export default function TherapySession() {
+// CHANGED: Removed 'default' keyword
+export function TherapySession() {
   const [userName, setUserName] = useState("");
   const [userContext, setUserContext] = useState("");
 
@@ -77,17 +77,14 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   
-  // Use Ref for callId to avoid triggering re-renders or effect cleanup
   const currentCallIdRef = useRef<string | null>(null);
   
-  // Real SDK Client
   const retellClient = useRef<RetellWebClient | null>(null);
   
   const startWebCallMutation = api.therapy.createWebCall.useMutation();
   const summaryMutation = api.therapy.generateSummary.useMutation();
 
   useEffect(() => {
-    // Initialize the REAL client ONCE on mount
     retellClient.current = new RetellWebClient();
 
     retellClient.current.on("call_started", () => {
@@ -97,7 +94,6 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
     
     retellClient.current.on("call_ended", () => {
       setIsAgentSpeaking(false);
-      // Trigger summary generation when call actually ends
       void handleGenerateSummary();
     });
 
@@ -106,11 +102,8 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
 
     retellClient.current.on("error", (error: any) => {
         console.error("Retell Error:", error);
-        // Optional: Set to idle if connection fails completely
-        // setCallState("idle"); 
     });
 
-    // Cleanup only on component unmount
     return () => {
       retellClient.current?.stopCall();
     };
@@ -120,7 +113,6 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
     setCallState("connecting");
     setSummary(null);
     try {
-      // 1. Get Access Token from your T3 Backend (Real API Call)
       const { accessToken, callId } = await startWebCallMutation.mutateAsync({
         userName: userName || "Friend",
         userContext: userContext || "General check-in"
@@ -130,7 +122,6 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
       
       if (!retellClient.current) return;
       
-      // 2. Connect to Retell (Real WebRTC connection)
       await retellClient.current.startCall({ accessToken });
     } catch (err) {
       console.error("Connection Failed:", err);
@@ -143,7 +134,6 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
     retellClient.current?.stopCall();
   };
 
-  // --- POLLING LOGIC ---
   const handleGenerateSummary = async () => {
     const callId = currentCallIdRef.current;
     if (!callId) {
@@ -153,7 +143,6 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
     
     setCallState("summarizing");
     
-    // Poll for summary (max 5 attempts, 2s interval)
     let attempts = 0;
     const maxAttempts = 5;
     
@@ -161,10 +150,9 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
       try {
         const data = await summaryMutation.mutateAsync({ callId });
         
-        // Check if we got valid data or just a "Processing" placeholder
         if (data.emotional_state === "Processing" && attempts < maxAttempts) {
           attempts++;
-          setTimeout(() => void poll(), 2000); // Retry after 2s
+          setTimeout(() => void poll(), 2000);
         } else {
           setSummary(data as SessionSummary);
           setCallState("ended");
@@ -175,7 +163,6 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
       }
     };
 
-    // Start polling
     void poll();
   };
 
