@@ -4,7 +4,6 @@ import { createTRPCRouter, publicProcedure, protectedProcedure } from "~/server/
 import Retell from "retell-sdk";
 import Groq from "groq-sdk";
 
-// Initialize SDKs with Environment Variables
 const retell = new Retell({
   apiKey: process.env.RETELL_API_KEY!,
 });
@@ -13,7 +12,6 @@ const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY!,
 });
 
-// Helper function to map Prisma output to expected API/Frontend format (snake_case)
 const mapSessionToSummary = (session: any) => {
     return {
         emotional_state: session.emotionalState ?? "Neutral",
@@ -23,11 +21,7 @@ const mapSessionToSummary = (session: any) => {
     };
 }
 
-
 export const therapyRouter = createTRPCRouter({
-  // --------------------------------------------------------------------------
-  // 1. START WEB CALL
-  // --------------------------------------------------------------------------
   createWebCall: publicProcedure
     .input(z.object({ 
       userName: z.string().optional(),
@@ -40,16 +34,12 @@ export const therapyRouter = createTRPCRouter({
 
         const webCall = await retell.call.createWebCall({
           agent_id: process.env.RETELL_AGENT_ID!,
-          
           metadata: {
             userId: userId,
           },
-          
           retell_llm_dynamic_variables: {
             user_name: userName,
             context: input.userContext ?? "User just started the session.",
-            // NEW: Explicit instruction for the first turn
-            start_instruction: `Say exactly: "Hi ${userName}, how are you doing today?"`
           },
         });
         
@@ -63,12 +53,11 @@ export const therapyRouter = createTRPCRouter({
       }
     }),
 
-  // ... (generateSummary remains the same as previous step) ...
-  // Copy the generateSummary function from the previous working version here
   generateSummary: publicProcedure
     .input(z.object({ callId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       try {
+        // 1. Database Check
         const savedSession = await ctx.prisma.therapySession.findUnique({
           where: { retellCallId: input.callId }
         });
@@ -80,6 +69,7 @@ export const therapyRouter = createTRPCRouter({
 
         console.log("⚠️ Webhook pending. Generating live summary...");
         
+        // 2. Wait & Fetch
         await new Promise(resolve => setTimeout(resolve, 1500));
         const call = await retell.call.retrieve(input.callId);
         
@@ -92,6 +82,7 @@ export const therapyRouter = createTRPCRouter({
             };
         }
 
+        // 3. Analyze (Fast Model)
         const completion = await groq.chat.completions.create({
             messages: [
             {
@@ -100,21 +91,22 @@ export const therapyRouter = createTRPCRouter({
                 You are an expert clinical supervisor. Analyze this therapy transcript.
                 Output a JSON object with EXACTLY this structure:
                 {
-                  "emotional_state": "string (e.g. Anxious)",
-                  "key_topics": ["string", "string"],
-                  "risk_flags": ["string" (e.g. None, Self-harm)],
-                  "narrative_summary": "string (2 sentences max)"
+                  "emotional_state": "string",
+                  "key_topics": ["string"],
+                  "risk_flags": ["string"],
+                  "narrative_summary": "string"
                 }
                 `
             },
             { role: "user", content: call.transcript }
             ],
-            model: "llama-3.3-70b-versatile", 
+            model: "llama-3.1-8b-instant", 
             response_format: { type: "json_object" }
         });
 
         const analysis = JSON.parse(completion.choices[0]?.message?.content || "{}");
 
+        // 4. Upsert to DB
         await ctx.prisma.therapySession.upsert({
             where: { retellCallId: input.callId },
             update: {
@@ -142,7 +134,7 @@ export const therapyRouter = createTRPCRouter({
         return analysis;
 
       } catch (error) {
-        console.error("Summary Error:", error);
+        console.error("❌ SUMMARY GENERATION FAILED:", error);
         return {
             emotional_state: "Error",
             key_topics: [],

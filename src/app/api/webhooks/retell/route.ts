@@ -5,7 +5,7 @@ import Groq from "groq-sdk";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// 1. Define Types for Incoming Data
+// 1. Define Types
 interface RetellMetadata {
   userId?: string;
 }
@@ -31,7 +31,6 @@ interface AnalysisResult {
 
 export async function POST(req: NextRequest) {
   try {
-    // 2. Parse Body (We disable linting just for this casting line)
     const body = await req.json();
     const event = body as RetellWebhookEvent;
 
@@ -40,13 +39,11 @@ export async function POST(req: NextRequest) {
     }
 
     const { call_id, transcript, recording_url, metadata } = event.call;
-
     console.log(`[Webhook] Processing call ${call_id}`);
 
-    // 3. Analyze with Groq
+    // 2. Analyze with Groq (Using Fast Model)
     const analysisCompletion = await groq.chat.completions.create({
-      // FIX: Using llama-3.3-70b-versatile for higher quality analysis
-      model: "llama-3.3-70b-versatile",
+      model: "llama-3.1-8b-instant", // Low latency model
       messages: [
         {
           role: "system",
@@ -59,7 +56,6 @@ export async function POST(req: NextRequest) {
             - risk_flags: string[]
           `
         },
-        // Use nullish coalescing (??) instead of OR (||) for safer typing
         { role: "user", content: transcript ?? "No transcript available." }
       ],
       response_format: { type: "json_object" }
@@ -68,19 +64,28 @@ export async function POST(req: NextRequest) {
     const rawContent = analysisCompletion.choices[0]?.message?.content ?? "{}";
     const analysis = JSON.parse(rawContent) as AnalysisResult;
 
-    // --- FIX FOR P2003 ERROR ---
-    // If userId is "guest" or missing, set it to null.
+    // 3. Handle Guest User ID
     let dbUserId: string | null = null;
-    
     if (metadata?.userId && metadata.userId !== "guest") {
         dbUserId = metadata.userId;
     }
 
-    // 4. Save to Database (Strictly Typed)
-    await prisma.therapySession.create({
-      data: {
+    // 4. UPSERT instead of CREATE (Fixes Unique Constraint Error)
+    await prisma.therapySession.upsert({
+      where: { retellCallId: call_id },
+      update: {
+        // If it exists, update the analysis in case it's better/newer
+        transcript: transcript ?? "",
+        audioUrl: recording_url ?? null,
+        summary: analysis.narrative_summary ?? "No summary generated.",
+        emotionalState: analysis.emotional_state ?? "Unknown",
+        topics: analysis.key_topics ?? [],
+        riskFlags: analysis.risk_flags ?? [],
+        endedAt: new Date(),
+      },
+      create: {
         retellCallId: call_id,
-        userId: dbUserId, // This will be null for guests, avoiding the constraint error
+        userId: dbUserId,
         transcript: transcript ?? "",
         audioUrl: recording_url ?? null,
         summary: analysis.narrative_summary ?? "No summary generated.",
@@ -91,7 +96,7 @@ export async function POST(req: NextRequest) {
       }
     });
 
-    console.log(`[Webhook] Saved session ${call_id}`);
+    console.log(`[Webhook] Saved/Updated session ${call_id}`);
     return NextResponse.json({ success: true });
 
   } catch (error) {
