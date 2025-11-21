@@ -6,14 +6,15 @@ import { createServer } from "http";
 
 dotenv.config();
 
+// Validate Env
 if (!process.env.GROQ_API_KEY) {
-  console.error("❌ CRITICAL ERROR: GROQ_API_KEY is missing");
+  console.error("❌ FATAL: GROQ_API_KEY missing.");
   process.exit(1);
 }
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// 1. Create HTTP Server (Health Check for Railway)
+// HTTP Server for Health Checks
 const server = createServer((req, res) => {
   if (req.url === "/health") {
     res.writeHead(200);
@@ -24,94 +25,72 @@ const server = createServer((req, res) => {
   }
 });
 
-// 2. WebSocket Server
 const wss = new WebSocketServer({ server });
 
-// 3. Native Heartbeat (No Application Layer JSON)
-function heartbeat(this: WebSocket) {
-  // @ts-ignore
-  this.isAlive = true;
-}
+// Simplified Connection Manager
+wss.on("connection", (ws: WebSocket) => {
+  console.log("✅ Client Connected");
 
-const interval = setInterval(() => {
-  wss.clients.forEach((ws) => {
-    // @ts-ignore
-    if (ws.isAlive === false) return ws.terminate();
-    // @ts-ignore
-    ws.isAlive = false;
-    ws.ping(); // Standard WS Ping frame, NOT JSON
-  });
-}, 10000);
-
-wss.on("close", () => clearInterval(interval));
-
-wss.on("connection", (ws) => {
-  console.log("✅ Retell Connected");
-  
-  // @ts-ignore
-  ws.isAlive = true;
-  ws.on("pong", heartbeat);
-
-  // Send Config Immediately
-  ws.send(JSON.stringify({
+  // 1. Send Config Immediately
+  const config = {
     response_type: "config",
-    config: { 
-      auto_reconnect: true, 
-      call_details: true 
+    config: {
+      auto_reconnect: true,
+      call_details: true,
     },
-  }));
+  };
+  ws.send(JSON.stringify(config));
 
+  // 2. Handle Messages
   ws.on("message", async (data) => {
     try {
-      const rawMsg = data.toString();
+      const raw = data.toString();
       
-      // IGNORE Text Pings (Do not reply with JSON)
-      if (rawMsg === "ping") {
-        return; 
-      }
+      // Ignore raw Pings (handled by WS protocol automatically)
+      if (raw === "ping") return;
 
-      const event = JSON.parse(rawMsg);
+      const event = JSON.parse(raw);
 
-      // IGNORE JSON Pings (Do not reply with JSON)
-      if (event.type === 'ping') {
-        return;
-      }
-
+      // Handle Interaction
       if (event.interaction_type === "response_required") {
         const transcript = event.transcript;
-        const vars = event.call?.retell_llm_dynamic_variables || {};
-        const userMsg = transcript[transcript.length - 1]?.content || "";
-        
-        console.log(`🗣️ User: ${userMsg}`);
+        const lastMsg = transcript[transcript.length - 1]?.content || "Unknown";
+        console.log(`🗣️ User: "${lastMsg}"`);
 
+        const vars = event.call?.retell_llm_dynamic_variables || {};
+        const userName = vars.user_name || "Friend";
+        
+        // Prepare Prompt
         const systemPrompt = `
-          You are Serenity, a supportive therapy AI.
-          User: ${vars.user_name || "Friend"}. 
+          You are Serenity, a therapy AI.
+          User: ${userName}.
           Context: ${vars.context || "None"}.
-          Guidelines: Be warm but concise. No lists. Max 2 sentences.
+          Keep it short (1-2 sentences). Be kind.
         `;
 
-        const sanitizedTranscript = transcript.map((msg: any) => ({
-          role: msg.role === "agent" ? "assistant" : msg.role,
-          content: msg.content
+        // Prepare Transcript (Map roles)
+        const history = transcript.map((m: any) => ({
+          role: m.role === "agent" ? "assistant" : m.role,
+          content: m.content
         }));
 
-        const completion = await groq.chat.completions.create({
-          messages: [{ role: "system", content: systemPrompt }, ...sanitizedTranscript],
+        // Call Groq
+        const stream = await groq.chat.completions.create({
+          messages: [{ role: "system", content: systemPrompt }, ...history],
           model: "llama-3.3-70b-versatile",
           stream: true,
         });
 
         let buffer = "";
-        
-        for await (const chunk of completion) {
+
+        for await (const chunk of stream) {
+          if (ws.readyState !== WebSocket.OPEN) break; // Stop if client disconnected
+
           const content = chunk.choices[0]?.delta?.content || "";
           buffer += content;
 
-          if (ws.readyState !== WebSocket.OPEN) break;
-
-          // Safe Buffering
-          if (/[.!?]/.test(content) || buffer.length > 50) {
+          // Safe Buffering: Send on punctuation OR length > 30
+          if (/[.!?]/.test(content) || buffer.length > 30) {
             ws.send(JSON.stringify({
               response_type: "response",
               response_id: event.response_id,
@@ -119,50 +98,49 @@ wss.on("connection", (ws) => {
               content_complete: false,
               end_call: false,
             }));
-            buffer = ""; 
+            buffer = "";
           }
         }
 
+        // Flush Buffer
         if (ws.readyState === WebSocket.OPEN) {
-            if (buffer.length > 0) {
-                ws.send(JSON.stringify({
-                    response_type: "response",
-                    response_id: event.response_id,
-                    content: buffer,
-                    content_complete: false,
-                    end_call: false,
-                }));
-            }
-
+          if (buffer.length > 0) {
             ws.send(JSON.stringify({
-                response_type: "response",
-                response_id: event.response_id,
-                content: "",
-                content_complete: true,
-                end_call: false,
+              response_type: "response",
+              response_id: event.response_id,
+              content: buffer,
+              content_complete: false,
+              end_call: false,
             }));
+          }
+          
+          // End Turn
+          ws.send(JSON.stringify({
+            response_type: "response",
+            response_id: event.response_id,
+            content: "",
+            content_complete: true,
+            end_call: false,
+          }));
         }
       }
     } catch (err) {
-      console.error("Error:", err);
+      console.error("⚠️ Error processing message:", err);
     }
   });
 
-  ws.on("close", () => console.log("❌ Retell Disconnected"));
-  ws.on("error", (e) => console.error("Socket Error:", e));
+  ws.on("close", () => console.log("❌ Client Disconnected"));
+  ws.on("error", (e) => console.error("❌ Socket Error:", e));
 });
 
-// 4. Robust Listen & Shutdown
+// Start Server
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
-  console.log(`🧠 Bridge Active on port ${PORT}`);
+  console.log(`🚀 Bridge running on port ${PORT}`);
 });
 
-// Handle Railway SIGTERM to prevent "Port in use" on restart
+// Prevent Zombie Processes
 process.on("SIGTERM", () => {
-  console.log("🛑 SIGTERM. Closing server...");
-  server.close(() => {
-    console.log("✅ Closed.");
-    process.exit(0);
-  });
+  console.log("🛑 SIGTERM received. Closing server...");
+  server.close(() => process.exit(0));
 });
