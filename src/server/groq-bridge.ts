@@ -15,25 +15,6 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const server = createServer();
 const wss = new WebSocketServer({ server });
 
-// --- 1. HEARTBEAT MECHANISM ---
-// Keep the connection alive even if the network lags
-function heartbeat(this: WebSocket) {
-  // @ts-ignore
-  this.isAlive = true;
-}
-
-const interval = setInterval(() => {
-  wss.clients.forEach((ws) => {
-    // @ts-ignore
-    if (ws.isAlive === false) return ws.terminate();
-    // @ts-ignore
-    ws.isAlive = false;
-    ws.ping();
-  });
-}, 30000);
-
-wss.on("close", () => clearInterval(interval));
-
 server.on("error", (err: any) => {
   if (err.code === "EADDRINUSE") {
     console.error("❌ FATAL: Port 8080 is busy. Kill the old process.");
@@ -41,31 +22,46 @@ server.on("error", (err: any) => {
   }
 });
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws: WebSocket) => {
   console.log("✅ Retell Connected");
   
-  // @ts-ignore
-  ws.isAlive = true;
-  ws.on("pong", heartbeat);
+  // HEARTBEAT: Manually keep connection alive
+  let isAlive = true;
+  ws.on('pong', () => { isAlive = true; });
+  
+  const pingInterval = setInterval(() => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.ping(); // Send ping to Retell to keep tunnel open
+    }
+  }, 10000); // Ping every 10s (aggressive)
 
   // Send config immediately
-  ws.send(JSON.stringify({
-    response_type: "config",
-    config: { 
-      auto_reconnect: true, 
-      call_details: true 
-    },
-  }));
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+        response_type: "config",
+        config: { 
+        auto_reconnect: true, 
+        call_details: true 
+        },
+    }));
+  }
 
   ws.on("message", async (data) => {
     try {
       const event = JSON.parse(data.toString());
 
+      // LOG PING/PONG Events for debugging (Optional, good for diagnosis)
+      if (event.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong' }));
+        return;
+      }
+
       if (event.interaction_type === "response_required") {
         const transcript = event.transcript;
         const vars = event.call?.retell_llm_dynamic_variables || {};
         
-        console.log(`🗣️ User: ${transcript[transcript.length - 1]?.content}`);
+        const userMsg = transcript[transcript.length - 1]?.content || "";
+        console.log(`🗣️ User: ${userMsg}`);
 
         const systemPrompt = `
           You are Serenity, a supportive therapy AI.
@@ -91,13 +87,11 @@ wss.on("connection", (ws) => {
           const content = chunk.choices[0]?.delta?.content || "";
           buffer += content;
 
-          // --- 2. SAFETY SEND ---
-          // Only send if socket is OPEN. Prevents crashes on disconnect.
+          // Only send if socket is OPEN
           if (ws.readyState !== WebSocket.OPEN) break;
 
-          // --- 3. FLUID BUFFERING ---
-          // Send on punctuation OR if buffer gets too long (prevents silence)
-          if (/[.!?]/.test(content) || buffer.length > 100) {
+          // Semantic Chunking: Wait for sentence end or comma pause
+          if (/[.!?]/.test(content) || (buffer.length > 50 && /[,;]/.test(content))) {
             ws.send(JSON.stringify({
               response_type: "response",
               response_id: event.response_id,
@@ -110,6 +104,7 @@ wss.on("connection", (ws) => {
         }
 
         if (ws.readyState === WebSocket.OPEN) {
+            // Flush buffer
             if (buffer.length > 0) {
                 ws.send(JSON.stringify({
                     response_type: "response",
@@ -120,6 +115,7 @@ wss.on("connection", (ws) => {
                 }));
             }
 
+            // End Turn
             ws.send(JSON.stringify({
                 response_type: "response",
                 response_id: event.response_id,
@@ -134,8 +130,18 @@ wss.on("connection", (ws) => {
     }
   });
 
-  ws.on("close", () => console.log("❌ Retell Disconnected"));
+  ws.on("close", () => {
+    console.log("❌ Retell Disconnected");
+    clearInterval(pingInterval);
+  });
+  
   ws.on("error", (e) => console.error("Socket Error:", e));
 });
 
 server.listen(8080, () => console.log("🧠 Bridge Active on 8080"));
+
+// CHANGE THIS LINE:
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => {
+  console.log(`🧠 Bridge Active on port ${PORT}`);
+});
