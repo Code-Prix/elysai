@@ -14,10 +14,18 @@ const groq = new Groq({
 
 const mapSessionToSummary = (session: any) => {
     return {
+        // Return BOTH casing styles to be safe
         emotional_state: session.emotionalState ?? "Neutral",
+        emotionalState: session.emotionalState ?? "Neutral",
+        
         key_topics: session.topics ?? [],
+        topics: session.topics ?? [],
+        
         risk_flags: session.riskFlags ?? [],
+        riskFlags: session.riskFlags ?? [],
+        
         narrative_summary: session.summary ?? "Summary unavailable.",
+        summary: session.summary ?? "Summary unavailable.",
     };
 }
 
@@ -69,7 +77,6 @@ export const therapyRouter = createTRPCRouter({
 
         console.log("⚠️ Webhook pending. Generating live summary...");
         
-        // 2. Wait & Fetch
         await new Promise(resolve => setTimeout(resolve, 1500));
         const call = await retell.call.retrieve(input.callId);
         
@@ -78,18 +85,19 @@ export const therapyRouter = createTRPCRouter({
                 emotional_state: "Processing",
                 key_topics: [],
                 risk_flags: [],
-                narrative_summary: "The session transcript is still processing. Please refresh in a moment."
+                narrative_summary: "Processing...",
+                // Add camelCase fallbacks for safety
+                emotionalState: "Processing"
             };
         }
 
-        // 3. Analyze (Fast Model)
         const completion = await groq.chat.completions.create({
             messages: [
             {
                 role: "system",
                 content: `
-                You are an expert clinical supervisor. Analyze this therapy transcript.
-                Output a JSON object with EXACTLY this structure:
+                Analyze this therapy transcript.
+                Output JSON:
                 {
                   "emotional_state": "string",
                   "key_topics": ["string"],
@@ -106,7 +114,7 @@ export const therapyRouter = createTRPCRouter({
 
         const analysis = JSON.parse(completion.choices[0]?.message?.content || "{}");
 
-        // 4. Upsert to DB
+        // Upsert safely
         await ctx.prisma.therapySession.upsert({
             where: { retellCallId: input.callId },
             update: {
@@ -131,15 +139,23 @@ export const therapyRouter = createTRPCRouter({
             }
         });
 
-        return analysis;
+        return {
+            ...analysis,
+            // Polyfill camelCase so frontend is happy regardless
+            emotionalState: analysis.emotional_state,
+            topics: analysis.key_topics,
+            riskFlags: analysis.risk_flags,
+            summary: analysis.narrative_summary
+        };
 
       } catch (error) {
         console.error("❌ SUMMARY GENERATION FAILED:", error);
         return {
             emotional_state: "Error",
+            emotionalState: "Error",
             key_topics: [],
             risk_flags: [],
-            narrative_summary: "We couldn't generate the summary right now. Please try again later."
+            narrative_summary: "We couldn't generate the summary right now."
         };
       }
     }),

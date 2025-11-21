@@ -9,11 +9,16 @@ import { Mic, Square, Heart, Wifi, User, MessageSquare, FileText, AlertTriangle,
 
 type CallState = "idle" | "connecting" | "active" | "summarizing" | "ended";
 
+// Relaxed interface to catch any data shape
 interface SessionSummary {
-  emotional_state: string;
-  key_topics: string[];
-  risk_flags: string[];
-  narrative_summary: string;
+  emotional_state?: string;
+  emotionalState?: string; // Handle potential camelCase
+  key_topics?: string[];
+  topics?: string[];      // Handle potential camelCase
+  risk_flags?: string[];
+  riskFlags?: string[];   // Handle potential camelCase
+  narrative_summary?: string;
+  summary?: string;       // Handle potential camelCase
 }
 
 export function TherapySession() {
@@ -146,7 +151,6 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
     setCallState("summarizing");
     
     let attempts = 0;
-    // Increase attempts to ensure we catch the webhook write
     const maxAttempts = 10; 
     
     const poll = async () => {
@@ -156,7 +160,11 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
         
         console.log("[Polling] Response:", data);
 
-        if (data.emotional_state === "Processing" && attempts < maxAttempts) {
+        // Check for "Processing" state or empty data
+        const isProcessing = data.emotional_state === "Processing" || 
+                             data.emotionalState === "Processing";
+
+        if (isProcessing && attempts < maxAttempts) {
           attempts++;
           setTimeout(() => void poll(), 2000);
         } else if (data.emotional_state === "Error") {
@@ -174,6 +182,18 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
     };
 
     void poll();
+  };
+
+  // Helper to safely get properties regardless of casing
+  const getSummaryProp = (prop: keyof SessionSummary, altProp: keyof SessionSummary) => {
+    if (!summary) return "";
+    return summary[prop] || summary[altProp] || "N/A";
+  };
+  
+  const getSummaryArray = (prop: keyof SessionSummary, altProp: keyof SessionSummary) => {
+    if (!summary) return [];
+    const val = summary[prop] || summary[altProp];
+    return Array.isArray(val) ? val : [];
   };
 
   return (
@@ -205,35 +225,40 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
            <div className="space-y-4 text-sm text-slate-300">
              <div>
                <span className="text-slate-500 text-xs uppercase tracking-wider font-bold block mb-1">Emotional State</span>
-               <p className="text-white text-lg">{summary.emotional_state}</p>
+               <p className="text-white text-lg">
+                 {getSummaryProp("emotional_state", "emotionalState") as string}
+               </p>
              </div>
              
              <div>
                <span className="text-slate-500 text-xs uppercase tracking-wider font-bold block mb-1">Summary</span>
-               <p className="leading-relaxed">{summary.narrative_summary}</p>
+               <p className="leading-relaxed">
+                 {getSummaryProp("narrative_summary", "summary") as string}
+               </p>
              </div>
 
              <div className="grid grid-cols-2 gap-4">
                 <div>
                     <span className="text-slate-500 text-xs uppercase tracking-wider font-bold block mb-1">Topics</span>
                     <div className="flex flex-wrap gap-2">
-                        {summary.key_topics && summary.key_topics.map((t, i) => (
+                        {getSummaryArray("key_topics", "topics").map((t, i) => (
                             <span key={i} className="px-2 py-1 bg-slate-700 rounded text-xs">{t}</span>
                         ))}
                     </div>
                 </div>
-                {summary.risk_flags && summary.risk_flags.length > 0 && !summary.risk_flags.includes("None") && (
-                    <div>
-                        <span className="text-red-500 text-xs uppercase tracking-wider font-bold flex items-center gap-1 mb-1">
-                            <AlertTriangle className="w-3 h-3" /> Risks
-                        </span>
-                        <div className="flex flex-wrap gap-2">
-                            {summary.risk_flags.map((t, i) => (
-                                <span key={i} className="px-2 py-1 bg-red-900/30 text-red-400 rounded text-xs border border-red-900/50">{t}</span>
-                            ))}
-                        </div>
+                <div>
+                    <span className="text-red-500 text-xs uppercase tracking-wider font-bold flex items-center gap-1 mb-1">
+                        <AlertTriangle className="w-3 h-3" /> Risks
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                        {getSummaryArray("risk_flags", "riskFlags").map((t, i) => (
+                            <span key={i} className="px-2 py-1 bg-red-900/30 text-red-400 rounded text-xs border border-red-900/50">{t}</span>
+                        ))}
+                        {getSummaryArray("risk_flags", "riskFlags").length === 0 && (
+                             <span className="px-2 py-1 bg-slate-700/50 text-slate-400 rounded text-xs">None detected</span>
+                        )}
                     </div>
-                )}
+                </div>
              </div>
            </div>
 
