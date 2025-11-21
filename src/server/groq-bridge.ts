@@ -6,7 +6,6 @@ import { createServer } from "http";
 
 dotenv.config();
 
-// Validate Env
 if (!process.env.GROQ_API_KEY) {
   console.error("❌ FATAL: GROQ_API_KEY missing.");
   process.exit(1);
@@ -14,24 +13,34 @@ if (!process.env.GROQ_API_KEY) {
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// HTTP Server for Health Checks
+// 1. HTTP Server (Health Check)
 const server = createServer((req, res) => {
-  if (req.url === "/health") {
-    res.writeHead(200);
-    res.end("OK");
-  } else {
-    res.writeHead(404);
-    res.end();
-  }
+  res.writeHead(200);
+  res.end("OK");
 });
 
 const wss = new WebSocketServer({ server });
 
-// Simplified Connection Manager
-wss.on("connection", (ws: WebSocket) => {
+// 2. Global Error Handler (Prevent Crash)
+process.on('uncaughtException', (err) => {
+  console.error('🔥 Uncaught Exception:', err);
+});
+
+// 3. Aggressive Keep-Alive
+const keepAliveInterval = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.ping(); 
+    }
+  });
+}, 3000); // Ping every 3s
+
+wss.on("close", () => clearInterval(keepAliveInterval));
+
+wss.on("connection", (ws) => {
   console.log("✅ Client Connected");
 
-  // 1. Send Config Immediately
+  // Send Config Immediately
   const config = {
     response_type: "config",
     config: {
@@ -41,17 +50,19 @@ wss.on("connection", (ws: WebSocket) => {
   };
   ws.send(JSON.stringify(config));
 
-  // 2. Handle Messages
   ws.on("message", async (data) => {
     try {
       const raw = data.toString();
       
-      // Ignore raw Pings (handled by WS protocol automatically)
+      // Ignore raw Pings
       if (raw === "ping") return;
 
       const event = JSON.parse(raw);
 
-      // Handle Interaction
+      // Ignore JSON Pings
+      if (event.type === 'ping') return;
+
+      // Log Interactions
       if (event.interaction_type === "response_required") {
         const transcript = event.transcript;
         const lastMsg = transcript[transcript.length - 1]?.content || "Unknown";
@@ -60,21 +71,17 @@ wss.on("connection", (ws: WebSocket) => {
         const vars = event.call?.retell_llm_dynamic_variables || {};
         const userName = vars.user_name || "Friend";
         
-        // Prepare Prompt
         const systemPrompt = `
           You are Serenity, a therapy AI.
-          User: ${userName}.
-          Context: ${vars.context || "None"}.
+          User: ${userName}. Context: ${vars.context || "None"}.
           Keep it short (1-2 sentences). Be kind.
         `;
 
-        // Prepare Transcript (Map roles)
         const history = transcript.map((m: any) => ({
           role: m.role === "agent" ? "assistant" : m.role,
           content: m.content
         }));
 
-        // Call Groq
         const stream = await groq.chat.completions.create({
           messages: [{ role: "system", content: systemPrompt }, ...history],
           model: "llama-3.3-70b-versatile",
@@ -84,7 +91,7 @@ wss.on("connection", (ws: WebSocket) => {
         let buffer = "";
 
         for await (const chunk of stream) {
-          if (ws.readyState !== WebSocket.OPEN) break; // Stop if client disconnected
+          if (ws.readyState !== WebSocket.OPEN) break;
 
           const content = chunk.choices[0]?.delta?.content || "";
           buffer += content;
@@ -102,7 +109,7 @@ wss.on("connection", (ws: WebSocket) => {
           }
         }
 
-        // Flush Buffer
+        // Flush
         if (ws.readyState === WebSocket.OPEN) {
           if (buffer.length > 0) {
             ws.send(JSON.stringify({
@@ -114,7 +121,6 @@ wss.on("connection", (ws: WebSocket) => {
             }));
           }
           
-          // End Turn
           ws.send(JSON.stringify({
             response_type: "response",
             response_id: event.response_id,
@@ -125,7 +131,7 @@ wss.on("connection", (ws: WebSocket) => {
         }
       }
     } catch (err) {
-      console.error("⚠️ Error processing message:", err);
+      console.error("⚠️ Message Error:", err);
     }
   });
 
@@ -133,13 +139,12 @@ wss.on("connection", (ws: WebSocket) => {
   ws.on("error", (e) => console.error("❌ Socket Error:", e));
 });
 
-// Start Server
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
   console.log(`🚀 Bridge running on port ${PORT}`);
 });
 
-// Prevent Zombie Processes
+// Handle Shutdown
 process.on("SIGTERM", () => {
   console.log("🛑 SIGTERM received. Closing server...");
   server.close(() => process.exit(0));
