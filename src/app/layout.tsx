@@ -26,7 +26,7 @@ export default async function RootLayout({
 
   return (
     <html lang="en" className={`${geist.variable}`}>
-      <body className="bg-[#343541] text-[#ECECF1]">
+      <body className={`${geist.variable} font-sans antialiased bg-[#05050A] text-white`}>
         <TRPCReactProvider>
           <div className="flex min-h-screen">
             {session && <Sidebar />}

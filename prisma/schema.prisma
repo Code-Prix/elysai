@@ -1,32 +1,40 @@
 generator client {
-    provider = "prisma-client-js"
-    output   = "../generated/prisma"
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
 }
 
 datasource db {
-    provider = "postgresql"
-    url      = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
-  id             String    @id @default(cuid())
-  name           String?
-  email          String?   @unique
-  emailVerified  DateTime?
-  image          String?
-  password       String?   // for credentials login
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  password      String? // for credentials login
 
-  accounts       Account[]
-  sessions       Session[]
-  
+  accounts Account[]
+  sessions Session[]
+
   // FIX: Add the missing inverse relation for Posts
-  posts          Post[]    
+  posts Post[]
 
   // Add this relation for Therapy Sessions
   therapySessions TherapySession[]
-  
+
   // Add this relation for Tasks
-  tasks           Task[]
+  tasks Task[]
+
+  // Therapist referral
+  referredTherapistId String?
+  referredTherapist   Therapist? @relation("TherapistReferrals", fields: [referredTherapistId], references: [id])
+  referredAt          DateTime?
+
+  // First session completed flag
+  hasCompletedFirstSession Boolean @default(false)
 }
 
 model Account {
@@ -43,7 +51,7 @@ model Account {
   id_token          String? @db.Text
   session_state     String?
 
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
 }
@@ -54,7 +62,7 @@ model Session {
   userId       String
   expires      DateTime
 
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model VerificationToken {
@@ -76,41 +84,69 @@ model Post {
 
 // NEW: The Therapy Session Store
 model TherapySession {
-  id              String   @id @default(cuid())
-  retellCallId    String   @unique
-  
-  userId          String?
-  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String @id @default(cuid())
+  retellCallId String @unique
 
-  transcript      String   @db.Text
-  audioUrl        String?
-  
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  transcript String  @db.Text
+  audioUrl   String?
+
   // Analysis Data
-  summary         String   @db.Text
-  emotionalState  String?
-  riskFlags       String[]
-  topics          String[]
-  
-  startedAt       DateTime @default(now())
-  endedAt         DateTime?
+  summary        String   @db.Text
+  emotionalState String?
+  riskFlags      String[]
+  topics         String[]
+
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
 
   // Relation to Tasks generated from this session
-  generatedTasks  Task[]
+  generatedTasks Task[]
+
+  // Context tracking (retrieved summaries from previous sessions)
+  retrievedContext String? @db.Text
 }
 
 model Task {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  description String
-  isCompleted Boolean  @default(false)
-  dueDate     DateTime?
-  
-  // Optional: Link to the session that generated this task
-  sessionId   String?
-  session     TherapySession? @relation(fields: [sessionId], references: [id])
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  description String
+  isCompleted Boolean   @default(false)
+  dueDate     DateTime?
+
+  // Optional: Link to the session that generated this task
+  sessionId String?
+  session   TherapySession? @relation(fields: [sessionId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Task follow-up tracking
+  completionAskedAt  DateTime?
+  completionResponse String? // "completed" | "not_completed" | "in_progress"
+}
+
+// Therapist model for professional mental health providers
+model Therapist {
+  id              String  @id @default(cuid())
+  name            String
+  title           String // e.g., "Licensed Clinical Psychologist"
+  specialization  String // e.g., "Anxiety & Depression"
+  bio             String  @db.Text
+  imageUrl        String?
+  yearsExperience Int
+  rating          Float   @default(5.0)
+
+  // Contact info (demo data)
+  email String?
+  phone String?
+
+  createdAt DateTime @default(now())
+
+  // Users who were referred to this therapist
+  referrals User[] @relation("TherapistReferrals")
 }
