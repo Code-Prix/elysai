@@ -64,6 +64,7 @@ export const therapyRouter = createTRPCRouter({
   generateSummary: publicProcedure
     .input(z.object({ callId: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      console.log(`[Summary] Request received for Call ID: ${input.callId}`);
       try {
         // 1. Database Check
         const savedSession = await ctx.prisma.therapySession.findUnique({
@@ -71,26 +72,31 @@ export const therapyRouter = createTRPCRouter({
         });
 
         if (savedSession) {
-          console.log("✅ returning saved summary from DB");
+          console.log("✅ [Summary] Returning saved summary from DB");
           return mapSessionToSummary(savedSession);
         }
 
-        console.log("⚠️ Webhook pending. Generating live summary...");
+        console.log("⚠️ [Summary] Webhook pending. Generating live summary...");
 
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        // Wait a bit for Retell to finalize the transcript
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        console.log(`[Summary] Fetching call details from Retell...`);
         const call = await retell.call.retrieve(input.callId);
+        console.log(`[Summary] Retell status: ${call.call_status}, Transcript length: ${call.transcript?.length || 0}`);
 
         if (!call.transcript) {
+          console.warn("[Summary] No transcript available yet.");
           return {
             emotional_state: "Processing",
             key_topics: [],
             risk_flags: [],
             narrative_summary: "Processing...",
-            // Add camelCase fallbacks for safety
             emotionalState: "Processing"
           };
         }
 
+        console.log(`[Summary] Sending transcript to Groq for analysis...`);
         const completion = await groq.chat.completions.create({
           messages: [
             {
@@ -112,7 +118,13 @@ export const therapyRouter = createTRPCRouter({
           response_format: { type: "json_object" }
         });
 
-        const analysis = JSON.parse(completion.choices[0]?.message?.content || "{}");
+        const content = completion.choices[0]?.message?.content;
+        if (!content) {
+          throw new Error("Groq returned empty content");
+        }
+
+        const analysis = JSON.parse(content);
+        console.log("[Summary] Analysis generated successfully.");
 
         // Upsert safely
         await ctx.prisma.therapySession.upsert({
@@ -138,6 +150,7 @@ export const therapyRouter = createTRPCRouter({
             endedAt: new Date()
           }
         });
+        console.log("[Summary] Saved to database.");
 
         return {
           ...analysis,
@@ -149,13 +162,14 @@ export const therapyRouter = createTRPCRouter({
         };
 
       } catch (error) {
-        console.error("❌ SUMMARY GENERATION FAILED:", error);
+        console.error("❌ [Summary] GENERATION FAILED:", error);
+        // Return a structured error that the frontend can recognize
         return {
           emotional_state: "Error",
           emotionalState: "Error",
           key_topics: [],
           risk_flags: [],
-          narrative_summary: "We couldn't generate the summary right now."
+          narrative_summary: "We couldn't generate the summary right now. Please try again."
         };
       }
     }),
