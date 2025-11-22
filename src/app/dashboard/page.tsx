@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { auth, signOut } from "auth";
 import { TherapySession } from "../_components/TherapySession";
-import { db } from "~/server/db";
+import { prisma as db } from "~/server/db";
 import { Clock, Calendar, MessageSquare, AlertTriangle } from "lucide-react";
 
 export default async function DashboardPage() {
