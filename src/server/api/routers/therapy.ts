@@ -24,6 +24,10 @@ const mapSessionToSummary = (session: any) => {
     risk_flags: session.riskFlags ?? [],
     riskFlags: session.riskFlags ?? [],
 
+    // Safety resources (not yet in DB schema, so default to empty)
+    safety_resources_provided: [],
+    safetyResources: [],
+
     narrative_summary: session.summary ?? "Summary unavailable.",
     summary: session.summary ?? "Summary unavailable.",
   };
@@ -91,8 +95,10 @@ export const therapyRouter = createTRPCRouter({
             emotional_state: "Processing",
             key_topics: [],
             risk_flags: [],
+            safety_resources_provided: [],
             narrative_summary: "Processing...",
-            emotionalState: "Processing"
+            emotionalState: "Processing",
+            safetyResources: []
           };
         }
 
@@ -108,8 +114,10 @@ export const therapyRouter = createTRPCRouter({
                   "emotional_state": "string",
                   "key_topics": ["string"],
                   "risk_flags": ["string"],
+                  "safety_resources_provided": ["string"],
                   "narrative_summary": "string"
                 }
+                If the AI provided specific hotline numbers or emergency contacts, list them in "safety_resources_provided".
                 `
             },
             { role: "user", content: call.transcript }
@@ -158,6 +166,7 @@ export const therapyRouter = createTRPCRouter({
           emotionalState: analysis.emotional_state,
           topics: analysis.key_topics,
           riskFlags: analysis.risk_flags,
+          safetyResources: analysis.safety_resources_provided || [],
           summary: analysis.narrative_summary
         };
 
@@ -169,6 +178,7 @@ export const therapyRouter = createTRPCRouter({
           emotionalState: "Error",
           key_topics: [],
           risk_flags: [],
+          safetyResources: [],
           narrative_summary: "We couldn't generate the summary right now. Please try again."
         };
       }
