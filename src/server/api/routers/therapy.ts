@@ -82,21 +82,20 @@ export const therapyRouter = createTRPCRouter({
 
         console.log("⚠️ [Summary] Webhook pending. Generating live summary...");
 
-        // Wait a bit for Retell to finalize the transcript
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
+        // Fetch call details immediately (no artificial delay)
         console.log(`[Summary] Fetching call details from Retell...`);
         const call = await retell.call.retrieve(input.callId);
         console.log(`[Summary] Retell status: ${call.call_status}, Transcript length: ${call.transcript?.length || 0}`);
 
-        if (!call.transcript) {
-          console.warn("[Summary] No transcript available yet.");
+        // If no transcript yet, return processing state (frontend will poll)
+        if (!call.transcript || call.transcript.length === 0) {
+          console.warn("[Summary] No transcript available yet. Returning processing state.");
           return {
             emotional_state: "Processing",
             key_topics: [],
             risk_flags: [],
             safety_resources_provided: [],
-            narrative_summary: "Processing...",
+            narrative_summary: "Transcript not ready. Please wait...",
             emotionalState: "Processing",
             safetyResources: []
           };
@@ -172,6 +171,7 @@ export const therapyRouter = createTRPCRouter({
 
       } catch (error) {
         console.error("❌ [Summary] GENERATION FAILED:", error);
+        console.error("Error details:", JSON.stringify(error, null, 2));
         // Return a structured error that the frontend can recognize
         return {
           emotional_state: "Error",
@@ -179,7 +179,7 @@ export const therapyRouter = createTRPCRouter({
           key_topics: [],
           risk_flags: [],
           safetyResources: [],
-          narrative_summary: "We couldn't generate the summary right now. Please try again."
+          narrative_summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`
         };
       }
     }),

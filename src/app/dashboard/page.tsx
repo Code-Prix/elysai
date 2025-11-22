@@ -16,16 +16,16 @@ export default async function DashboardPage() {
   }) : [];
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500/30 pb-20">
+    <main className="min-h-screen bg-slate-950 text-white font-sans selection:bg-indigo-500/30 pb-20">
       {/* Header */}
       <header className="w-full max-w-6xl mx-auto p-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
-            <span className="font-bold text-xl">S</span>
+          <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
+            <span className="font-bold text-2xl">S</span>
           </div>
           <div>
-            <h1 className="font-bold text-lg tracking-tight">Serenity AI</h1>
-            <p className="text-xs text-slate-500">Your Personal Companion</p>
+            <h1 className="font-bold text-xl tracking-tight text-white">Serenity AI</h1>
+            <p className="text-sm text-slate-400">Your Personal Companion</p>
           </div>
         </div>
 
@@ -43,14 +43,14 @@ export default async function DashboardPage() {
               >
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-medium transition-colors"
+                  className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 border-2 border-slate-700 hover:border-slate-600 rounded-lg text-sm font-medium transition-colors text-white"
                 >
                   Sign Out
                 </button>
               </form>
             </div>
           ) : (
-            <Link href="/api/auth/signin" className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors shadow-lg shadow-indigo-500/20">
+            <Link href="/api/auth/signin" className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-bold transition-colors shadow-lg shadow-indigo-500/20">
               Sign In
             </Link>
           )}
