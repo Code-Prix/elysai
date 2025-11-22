@@ -91,14 +91,14 @@ export default async function DashboardPage() {
                           session.emotionalState === 'Sad' ? 'bg-blue-500/10 text-blue-400' :
                             session.emotionalState === 'Anxious' ? 'bg-amber-500/10 text-amber-400' :
                               'bg-slate-700/30 text-slate-400'}`}>
-                        {session.emotionalState || "Unknown"}
+                        {session.emotionalState ?? "Unknown"}
                       </div>
                     </div>
 
                     {/* Content */}
                     <div className="flex-1 space-y-3">
                       <p className="text-slate-300 text-sm leading-relaxed">
-                        {session.summary || "No summary available for this session."}
+                        {session.summary ?? "No summary available for this session."}
                       </p>
 
                       {/* Topics */}
