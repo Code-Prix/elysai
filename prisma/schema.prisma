@@ -24,6 +24,9 @@ model User {
 
   // Add this relation for Therapy Sessions
   therapySessions TherapySession[]
+  
+  // Add this relation for Tasks
+  tasks           Task[]
 }
 
 model Account {
@@ -90,4 +93,24 @@ model TherapySession {
   
   startedAt       DateTime @default(now())
   endedAt         DateTime?
+
+  // Relation to Tasks generated from this session
+  generatedTasks  Task[]
+}
+
+model Task {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  description String
+  isCompleted Boolean  @default(false)
+  dueDate     DateTime?
+  
+  // Optional: Link to the session that generated this task
+  sessionId   String?
+  session     TherapySession? @relation(fields: [sessionId], references: [id])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

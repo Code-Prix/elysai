@@ -19,8 +19,8 @@
     "preview": "next build && next start",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "build:bridge": "echo 'No build needed for bridge'", 
-  "start:bridge": "tsx src/server/groq-bridge.ts"
+    "build:bridge": "echo 'No build needed for bridge'",
+    "start:bridge": "tsx src/server/groq-bridge.ts"
   },
   "dependencies": {
     "@auth/core": "^0.41.1",

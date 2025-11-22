@@ -4,457 +4,339 @@
 import React, { useState, useEffect, useRef } from "react";
 import { RetellWebClient } from "retell-client-js-sdk";
 import { api } from "~/trpc/react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Square, Heart, Wifi, User, MessageSquare, FileText, AlertTriangle, Activity, Bug, CheckCircle, XCircle, RefreshCw, ShieldAlert } from "lucide-react";
+import { motion } from "framer-motion";
+import { Mic, Square, Wifi, FileText, AlertTriangle, CheckSquare } from "lucide-react";
+import { VoiceVisualizer } from "./VoiceVisualizer";
 
 type CallState = "idle" | "connecting" | "active" | "summarizing" | "ended";
 
+interface Task {
+    id: string;
+    description: string;
+    isCompleted: boolean;
+}
+
 interface SessionSummary {
-  emotional_state?: string;
-  emotionalState?: string;
-  key_topics?: string[];
-  topics?: string[];
-  risk_flags?: string[];
-  riskFlags?: string[];
-  safety_resources_provided?: string[];
-  safetyResources?: string[];
-  narrative_summary?: string;
-  summary?: string;
+    emotional_state?: string;
+    emotionalState?: string;
+    key_topics?: string[];
+    topics?: string[];
+    risk_flags?: string[];
+    riskFlags?: string[];
+    narrative_summary?: string;
+    summary?: string;
+    generatedTasks?: Task[];
 }
 
 export function TherapySession() {
-  const [userName, setUserName] = useState("");
-  const [userContext, setUserContext] = useState("");
+    const [userName, setUserName] = useState("");
+    const [userContext, setUserContext] = useState("");
 
-  return (
-    <div className="w-full max-w-4xl mx-auto flex flex-col items-center justify-center p-4 font-sans">
-      <div className="mb-12 text-center space-y-3">
-        <div className="flex items-center justify-center gap-2 text-slate-400 mb-3">
-          <Heart className="w-5 h-5 fill-current" />
-          <span className="text-xs font-bold tracking-[0.2em] uppercase">Serenity AI</span>
+    return (
+        <div className="min-h-screen bg-[#343541] text-[#ECECF1] flex flex-col">
+            {/* Main Content Area - Centered like ChatGPT */}
+            <div className="flex-1 flex flex-col items-center justify-center p-4">
+                <div className="w-full max-w-3xl">
+                    <WebSessionView userName={userName} userContext={userContext} />
+                </div>
+            </div>
+
+            {/* Bottom Input Area - ChatGPT Style */}
+            <div className="border-t border-[#565869] bg-[#343541]">
+                <div className="max-w-3xl mx-auto p-4">
+                    <div className="flex gap-3">
+                        <input
+                            type="text"
+                            placeholder="Your Name"
+                            className="flex-1 bg-[#40414F] border border-[#565869] rounded-lg px-4 py-3 text-[#ECECF1] placeholder-[#8E8EA0] focus:outline-none focus:border-[#10A37F] transition-colors"
+                            value={userName}
+                            onChange={(e) => setUserName(e.target.value)}
+                            suppressHydrationWarning
+                        />
+                        <input
+                            type="text"
+                            placeholder="Topic (Optional)"
+                            className="flex-1 bg-[#40414F] border border-[#565869] rounded-lg px-4 py-3 text-[#ECECF1] placeholder-[#8E8EA0] focus:outline-none focus:border-[#10A37F] transition-colors"
+                            value={userContext}
+                            onChange={(e) => setUserContext(e.target.value)}
+                            suppressHydrationWarning
+                        />
+                    </div>
+                </div>
+            </div>
         </div>
-        <h1 className="text-4xl md:text-5xl font-light tracking-tight text-white">
-          How are you <span className="font-semibold">feeling</span>?
-        </h1>
-      </div>
-
-      {/* Context Inputs */}
-      <div className="w-full max-w-lg mb-8 grid grid-cols-2 gap-4">
-        <div className="bg-slate-800 border-2 border-slate-700 rounded-xl p-4 flex items-center gap-3 transition-all focus-within:border-slate-500">
-          <User className="w-5 h-5 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Your Name"
-            className="bg-transparent outline-none w-full text-base text-white placeholder-slate-500"
-            value={userName}
-            onChange={(e) => setUserName(e.target.value)}
-            suppressHydrationWarning
-          />
-        </div>
-        <div className="bg-slate-800 border-2 border-slate-700 rounded-xl p-4 flex items-center gap-3 transition-all focus-within:border-slate-500">
-          <MessageSquare className="w-5 h-5 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Topic (Optional)"
-            className="bg-transparent outline-none w-full text-base text-white placeholder-slate-500"
-            value={userContext}
-            onChange={(e) => setUserContext(e.target.value)}
-            suppressHydrationWarning
-          />
-        </div>
-      </div>
-
-      {/* Main Card */}
-      <div className="w-full max-w-lg bg-slate-900 border-2 border-slate-800 rounded-3xl shadow-2xl overflow-hidden relative p-10 min-h-[500px] flex flex-col items-center justify-center">
-        <WebSessionView userName={userName} userContext={userContext} />
-      </div>
-
-      <div className="mt-12 text-xs text-slate-500 flex items-center gap-2 uppercase tracking-widest">
-        <Activity className="w-4 h-4" />
-        <span>Powered by Groq LPU & Deepgram Aura</span>
-      </div>
-    </div>
-  );
+    );
 }
 
 function WebSessionView({ userName, userContext }: { userName: string, userContext: string }) {
-  const [callState, setCallState] = useState<CallState>("idle");
-  const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
-  const [summary, setSummary] = useState<SessionSummary | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    const [callState, setCallState] = useState<CallState>("idle");
+    const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
+    const [summary, setSummary] = useState<SessionSummary | null>(null);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const currentCallIdRef = useRef<string | null>(null);
-  const retellClient = useRef<RetellWebClient | null>(null);
+    const currentCallIdRef = useRef<string | null>(null);
+    const retellClient = useRef<RetellWebClient | null>(null);
 
-  const startWebCallMutation = api.therapy.createWebCall.useMutation();
-  const summaryMutation = api.therapy.generateSummary.useMutation();
-  const testBridgeMutation = api.therapy.testBridge.useMutation();
+    const startWebCallMutation = api.therapy.createWebCall.useMutation();
+    const summaryMutation = api.therapy.generateSummary.useMutation();
 
-  const [debugMode, setDebugMode] = useState(false);
-  const [bridgeStatus, setBridgeStatus] = useState<"unknown" | "success" | "failed">("unknown");
+    useEffect(() => {
+        retellClient.current = new RetellWebClient();
 
-  useEffect(() => {
-    retellClient.current = new RetellWebClient();
+        retellClient.current.on("call_started", () => {
+            setCallState("active");
+            setIsAgentSpeaking(true);
+            setErrorMsg(null);
+        });
 
-    retellClient.current.on("call_started", () => {
-      setCallState("active");
-      setIsAgentSpeaking(true);
-      setErrorMsg(null);
-    });
+        retellClient.current.on("call_ended", () => {
+            setIsAgentSpeaking(false);
+            void handleGenerateSummary();
+        });
 
-    retellClient.current.on("call_ended", () => {
-      setIsAgentSpeaking(false);
-      void handleGenerateSummary();
-    });
+        retellClient.current.on("agent_start_talking", () => setIsAgentSpeaking(true));
+        retellClient.current.on("agent_stop_talking", () => setIsAgentSpeaking(false));
 
-    retellClient.current.on("agent_start_talking", () => setIsAgentSpeaking(true));
-    retellClient.current.on("agent_stop_talking", () => setIsAgentSpeaking(false));
+        retellClient.current.on("error", (error: any) => {
+            console.error("Retell Error:", error);
+            setErrorMsg("Connection error. Please try again.");
+        });
 
-    retellClient.current.on("error", (error: any) => {
-      console.error("Retell Error:", error);
-      setErrorMsg("Connection error. Please try again.");
-    });
+        return () => {
+            retellClient.current?.stopCall();
+        };
+    }, []);
 
-    return () => {
-      retellClient.current?.stopCall();
-    };
-  }, []);
+    const handleStart = async () => {
+        setCallState("connecting");
+        setSummary(null);
+        setErrorMsg(null);
+        try {
+            const { accessToken, callId } = await startWebCallMutation.mutateAsync({
+                userName: userName || "Friend",
+                userContext: userContext || "General check-in"
+            });
 
-  const handleStart = async () => {
-    setCallState("connecting");
-    setSummary(null);
-    setErrorMsg(null);
-    try {
-      const { accessToken, callId } = await startWebCallMutation.mutateAsync({
-        userName: userName || "Friend",
-        userContext: userContext || "General check-in"
-      });
+            currentCallIdRef.current = callId;
 
-      currentCallIdRef.current = callId;
+            if (!retellClient.current) return;
 
-      if (!retellClient.current) return;
-
-      await retellClient.current.startCall({ accessToken });
-    } catch (err) {
-      console.error("Connection Failed:", err);
-      setCallState("idle");
-      setErrorMsg("Failed to start session. Check console.");
-    }
-  };
-
-  const handleStop = () => {
-    retellClient.current?.stopCall();
-  };
-
-  const handleGenerateSummary = async () => {
-    const callId = currentCallIdRef.current;
-    if (!callId) {
-      setCallState("idle");
-      return;
-    }
-
-    setCallState("summarizing");
-    setErrorMsg(null);
-
-    let attempts = 0;
-    const maxAttempts = 10;
-
-    const poll = async () => {
-      try {
-        console.log(`[Polling] Checking summary attempt ${attempts + 1}...`);
-        const data = await summaryMutation.mutateAsync({ callId });
-
-        console.log("[Polling] Response:", data);
-
-        // Check for "Processing" state or empty data
-        const isProcessing = data.emotional_state === "Processing" ||
-          data.emotionalState === "Processing";
-
-        if (isProcessing && attempts < maxAttempts) {
-          attempts++;
-          setTimeout(() => void poll(), 2000);
-        } else if (data.emotional_state === "Error" || data.emotionalState === "Error") {
-          setErrorMsg(data.narrative_summary || data.summary || "Could not analyze session.");
-          setCallState("ended");
-        } else {
-          setSummary(data as SessionSummary);
-          setCallState("ended");
+            await retellClient.current.startCall({ accessToken });
+        } catch (err: any) {
+            console.error("Connection Failed:", err);
+            setCallState("idle");
+            setErrorMsg(err.message || "Failed to start session.");
         }
-      } catch (e) {
-        console.error("Summary failed", e);
-        setErrorMsg("Error retrieving summary.");
-        setCallState("ended");
-      }
     };
 
-    void poll();
-  };
+    const handleStop = () => {
+        retellClient.current?.stopCall();
+    };
 
-  const handleTestBridge = async () => {
-    try {
-      const res = await testBridgeMutation.mutateAsync();
-      setBridgeStatus(res.success ? "success" : "failed");
-    } catch (e) {
-      setBridgeStatus("failed");
-    }
-  };
+    const handleGenerateSummary = async () => {
+        const callId = currentCallIdRef.current;
+        if (!callId) {
+            setCallState("idle");
+            return;
+        }
 
-  // Helper to safely get properties regardless of casing
-  const getSummaryProp = (prop: keyof SessionSummary, altProp: keyof SessionSummary) => {
-    if (!summary) return "";
-    return summary[prop] || summary[altProp] || "N/A";
-  };
+        setCallState("summarizing");
 
-  const getSummaryArray = (prop: keyof SessionSummary, altProp: keyof SessionSummary) => {
-    if (!summary) return [];
-    const val = summary[prop] || summary[altProp];
-    return Array.isArray(val) ? val : [];
-  };
+        let attempts = 0;
+        const maxAttempts = 10;
 
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="flex flex-col items-center w-full relative z-10"
-      suppressHydrationWarning
-    >
-      {/* DEBUG TOGGLE */}
-      <div className="absolute -top-2 -right-2 flex items-center gap-2 z-50">
-        <button
-          onClick={() => setDebugMode(!debugMode)}
-          className={`p-2 rounded-full transition-colors ${debugMode ? "bg-white text-black" : "bg-slate-800 text-slate-500 hover:text-slate-300"}`}
-          title="Toggle Debug Mode"
-        >
-          <Bug className="w-4 h-4" />
-        </button>
-      </div>
+        const poll = async () => {
+            try {
+                const data = await summaryMutation.mutateAsync({ callId });
 
-      {/* DEBUG PANEL */}
-      {debugMode && (
-        <div className="w-full max-w-lg mb-6 p-4 bg-black border-2 border-slate-700 rounded-lg text-xs font-mono space-y-2 absolute top-0 left-0 z-40">
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">Bridge Status:</span>
-            <div className="flex items-center gap-2">
-              {bridgeStatus === "unknown" && <span className="text-slate-500">Untested</span>}
-              {bridgeStatus === "success" && <span className="text-green-400 flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Connected</span>}
-              {bridgeStatus === "failed" && <span className="text-red-400 flex items-center gap-1"><XCircle className="w-3 h-3" /> Failed</span>}
-              <button
-                onClick={handleTestBridge}
-                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 transition-colors"
-              >
-                Test
-              </button>
-            </div>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">Call State:</span>
-            <span className="text-white font-bold">{callState}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">Agent Speaking:</span>
-            <span className={isAgentSpeaking ? "text-green-400 font-bold" : "text-slate-500"}>{isAgentSpeaking ? "YES" : "NO"}</span>
-          </div>
-          {currentCallIdRef.current && (
-            <div className="flex items-center justify-between">
-              <span className="text-slate-400">Call ID:</span>
-              <span className="text-slate-500 truncate max-w-[150px]">{currentCallIdRef.current}</span>
-            </div>
-          )}
-        </div>
-      )}
+                const isProcessing = data.emotional_state === "Processing" ||
+                    data.emotionalState === "Processing";
 
-      {/* 1. SUMMARY VIEW */}
-      {callState === "ended" && (
+                if (isProcessing && attempts < maxAttempts) {
+                    attempts++;
+                    setTimeout(() => void poll(), 2000);
+                } else if (data.emotional_state === "Error") {
+                    setErrorMsg("Could not analyze session.");
+                    setCallState("idle");
+                } else {
+                    setSummary(data as SessionSummary);
+                    setCallState("ended");
+                }
+            } catch (e) {
+                console.error("Summary failed", e);
+                setErrorMsg("Error retrieving summary.");
+                setCallState("idle");
+            }
+        };
+
+        void poll();
+    };
+
+    const getSummaryProp = (prop: keyof SessionSummary, altProp: keyof SessionSummary): string => {
+        if (!summary) return "";
+        const val = summary[prop] || summary[altProp];
+        if (typeof val === "string") return val;
+        return "N/A";
+    };
+
+    const getSummaryArray = (prop: keyof SessionSummary, altProp: keyof SessionSummary): string[] => {
+        if (!summary) return [];
+        const val = summary[prop] || summary[altProp];
+        return Array.isArray(val) ? val as string[] : [];
+    };
+
+    return (
         <motion.div
-          initial={{ scale: 0.95, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className="w-full"
-          key="summary"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex flex-col items-center w-full"
+            suppressHydrationWarning
         >
-          {errorMsg ? (
-            <div className="text-center py-8">
-              <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-                <AlertTriangle className="w-8 h-8 text-red-400" />
-              </div>
-              <h3 className="text-xl font-semibold text-white mb-3">Analysis Failed</h3>
-              <p className="text-slate-400 text-sm mb-8 leading-relaxed max-w-md mx-auto">{errorMsg}</p>
-              <button
-                onClick={() => handleGenerateSummary()}
-                className="px-8 py-3 bg-white text-black hover:bg-slate-200 rounded-full text-sm font-bold transition-colors flex items-center gap-2 mx-auto shadow-lg"
-              >
-                <RefreshCw className="w-4 h-4" /> Retry Analysis
-              </button>
-              <button
-                onClick={() => {
-                  setCallState("idle");
-                  setSummary(null);
-                  setErrorMsg(null);
-                }}
-                className="mt-8 text-sm text-slate-400 hover:text-white uppercase tracking-widest transition-colors"
-              >
-                Start New Session
-              </button>
-            </div>
-          ) : summary ? (
-            <div className="bg-slate-800/50 rounded-2xl p-8 border-2 border-slate-700">
-              <div className="flex items-center justify-between mb-8">
-                <div className="flex items-center gap-3 text-slate-300">
-                  <FileText className="w-5 h-5" />
-                  <h3 className="font-bold tracking-widest uppercase text-sm">Session Analysis</h3>
+            {/* ERROR MESSAGE */}
+            {errorMsg && (
+                <div className="mb-4 p-4 bg-red-900/20 border border-red-800/50 rounded-lg text-red-200 text-sm">
+                    {errorMsg}
                 </div>
-                <span className="text-xs text-slate-500">{new Date().toLocaleDateString()}</span>
-              </div>
-
-              {/* SAFETY ALERT */}
-              {getSummaryArray("safety_resources_provided", "safetyResources").length > 0 && (
-                <div className="mb-8 bg-red-500/10 border-2 border-red-500/30 rounded-xl p-5 flex items-start gap-4">
-                  <ShieldAlert className="w-6 h-6 text-red-400 shrink-0 mt-1" />
-                  <div>
-                    <h4 className="text-red-400 text-sm font-bold uppercase tracking-wider mb-2">Safety Resources Provided</h4>
-                    <ul className="space-y-2">
-                      {getSummaryArray("safety_resources_provided", "safetyResources").map((res, i) => (
-                        <li key={i} className="text-sm text-red-300 leading-relaxed">• {res}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-8 text-base">
-                <div>
-                  <span className="text-slate-500 text-xs uppercase tracking-widest font-bold block mb-3">Emotional State</span>
-                  <p className="text-white text-2xl font-medium">
-                    {getSummaryProp("emotional_state", "emotionalState") as string}
-                  </p>
-                </div>
-
-                <div>
-                  <span className="text-slate-500 text-xs uppercase tracking-widest font-bold block mb-3">Summary</span>
-                  <p className="leading-relaxed text-slate-300 text-sm">
-                    {getSummaryProp("narrative_summary", "summary") as string}
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 gap-6">
-                  <div>
-                    <span className="text-slate-500 text-xs uppercase tracking-widest font-bold block mb-3">Topics</span>
-                    <div className="flex flex-wrap gap-2">
-                      {getSummaryArray("key_topics", "topics").map((t, i) => (
-                        <span key={i} className="px-4 py-2 bg-slate-700 text-white rounded-full text-sm border-2 border-slate-600">{t}</span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <button
-                onClick={() => {
-                  setCallState("idle");
-                  setSummary(null);
-                  setErrorMsg(null);
-                }}
-                className="w-full mt-10 py-4 bg-white text-black hover:bg-slate-200 rounded-xl text-sm font-bold uppercase tracking-widest transition-colors shadow-lg"
-              >
-                Start New Session
-              </button>
-            </div>
-          ) : null}
-        </motion.div>
-      )}
-
-      {/* 2. LOADING SUMMARY */}
-      {callState === "summarizing" && (
-        <div className="text-center py-12 space-y-6">
-          <div className="relative w-16 h-16 mx-auto">
-            <div className="absolute inset-0 border-4 border-slate-700 rounded-full"></div>
-            <div className="absolute inset-0 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
-          </div>
-          <div className="space-y-2">
-            <p className="text-white font-medium text-base animate-pulse">Generating insights...</p>
-            <p className="text-slate-400 text-sm">This may take a moment</p>
-          </div>
-        </div>
-      )}
-
-      {/* 3. ACTIVE CALL (ORB) */}
-      {(callState === "active" || callState === "connecting") && (
-        <>
-          <div className="relative w-64 h-64 flex items-center justify-center mb-10">
-            {callState === "active" && (
-              <>
-                <motion.div
-                  animate={{ scale: [1, 1.2, 1], opacity: [0.2, 0.1, 0.2] }}
-                  transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-                  className="absolute inset-0 rounded-full bg-white blur-[100px]"
-                />
-              </>
             )}
 
-            {/* Core Orb */}
-            <div className={`relative z-10 w-40 h-40 rounded-full flex items-center justify-center transition-all duration-700
-                ${callState === "active"
-                ? "bg-white shadow-[0_0_60px_rgba(255,255,255,0.3)]"
-                : "bg-slate-800 border-4 border-slate-700"}
-                `}>
-              {callState === "connecting" ? (
-                <Wifi className="w-10 h-10 text-slate-500 animate-pulse" />
-              ) : (
+            {/* 1. SUMMARY VIEW */}
+            {callState === "ended" && summary && (
                 <motion.div
-                  animate={{ scale: isAgentSpeaking ? [1, 1.15, 1] : 1 }}
-                  transition={{ duration: 0.3 }}
+                    initial={{ scale: 0.95, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="w-full bg-[#444654] rounded-lg p-6 border border-[#565869]"
                 >
-                  <Mic className={`w-10 h-10 ${callState === 'active' ? 'text-black' : 'text-slate-400'}`} />
+                    <div className="flex items-center gap-2 mb-4 text-[#10A37F]">
+                        <FileText className="w-5 h-5" />
+                        <h3 className="font-semibold text-lg">Session Analysis</h3>
+                    </div>
+
+                    <div className="space-y-4 text-sm">
+                        <div>
+                            <span className="text-[#8E8EA0] text-xs uppercase tracking-wider font-bold block mb-2">Emotional State</span>
+                            <p className="text-[#ECECF1] text-base font-medium">
+                                {getSummaryProp("emotional_state", "emotionalState")}
+                            </p>
+                        </div>
+
+                        <div>
+                            <span className="text-[#8E8EA0] text-xs uppercase tracking-wider font-bold block mb-2">Summary</span>
+                            <p className="text-[#C5C5D2] leading-relaxed">
+                                {getSummaryProp("narrative_summary", "summary")}
+                            </p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <span className="text-[#8E8EA0] text-xs uppercase tracking-wider font-bold block mb-2">Topics</span>
+                                <div className="flex flex-wrap gap-2">
+                                    {getSummaryArray("key_topics", "topics").map((t, i) => (
+                                        <span key={i} className="px-3 py-1 bg-[#565869] rounded-full text-xs text-[#ECECF1]">{t}</span>
+                                    ))}
+                                </div>
+                            </div>
+                            <div>
+                                <span className="text-red-400 text-xs uppercase tracking-wider font-bold flex items-center gap-1 mb-2">
+                                    <AlertTriangle className="w-3 h-3" /> Risks
+                                </span>
+                                <div className="flex flex-wrap gap-2">
+                                    {getSummaryArray("risk_flags", "riskFlags").map((t, i) => (
+                                        <span key={i} className="px-3 py-1 bg-red-900/30 text-red-300 rounded-full text-xs border border-red-800/50">{t}</span>
+                                    ))}
+                                    {getSummaryArray("risk_flags", "riskFlags").length === 0 && (
+                                        <span className="px-3 py-1 bg-[#565869]/50 text-[#8E8EA0] rounded-full text-xs">None detected</span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* GENERATED TASKS */}
+                        {summary.generatedTasks && summary.generatedTasks.length > 0 && (
+                            <div className="mt-4 pt-4 border-t border-[#565869]">
+                                <div className="flex items-center gap-2 mb-3 text-[#10A37F]">
+                                    <CheckSquare className="w-4 h-4" />
+                                    <span className="text-xs uppercase tracking-wider font-bold">Next Day Tasks</span>
+                                </div>
+                                <ul className="space-y-2">
+                                    {summary.generatedTasks.map((task, i) => (
+                                        <li key={i} className="flex items-start gap-3 bg-[#343541] p-3 rounded-lg border border-[#565869]">
+                                            <div className="mt-0.5 w-4 h-4 rounded border-2 border-[#10A37F] flex-shrink-0" />
+                                            <span className="text-[#C5C5D2]">{task.description}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                    </div>
+
+                    <button
+                        onClick={() => {
+                            setCallState("idle");
+                            setSummary(null);
+                            setErrorMsg(null);
+                        }}
+                        className="w-full mt-6 py-3 bg-[#10A37F] hover:bg-[#19C37D] rounded-lg text-sm font-medium transition-colors text-white"
+                    >
+                        Start New Session
+                    </button>
                 </motion.div>
-              )}
-            </div>
-
-            {/* Ripple Rings */}
-            {callState === "active" && isAgentSpeaking && (
-              <>
-                <motion.div
-                  initial={{ opacity: 0, scale: 1 }}
-                  animate={{ opacity: 0, scale: 1.6 }}
-                  transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut" }}
-                  className="absolute w-40 h-40 rounded-full border-2 border-white/20"
-                />
-              </>
             )}
-          </div>
 
-          <div className="h-10 mb-10 text-center">
-            {callState === "connecting" && <span className="text-slate-400 text-sm uppercase tracking-widest animate-pulse font-medium">Connecting...</span>}
-            {callState === "active" && (
-              isAgentSpeaking ?
-                <span className="text-white text-base uppercase tracking-widest font-bold">Serenity is speaking</span> :
-                <span className="text-slate-400 text-sm uppercase tracking-widest">Listening</span>
+            {/* 2. LOADING SUMMARY */}
+            {callState === "summarizing" && (
+                <div className="text-center py-12 space-y-4">
+                    <div className="w-10 h-10 border-3 border-[#10A37F] border-t-transparent rounded-full animate-spin mx-auto" />
+                    <p className="text-[#10A37F] animate-pulse font-medium">Generating insights...</p>
+                    <p className="text-xs text-[#8E8EA0]">This may take a moment...</p>
+                </div>
             )}
-          </div>
 
-          <button
-            onClick={handleStop}
-            className="group relative px-10 py-4 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-full transition-all flex items-center gap-3 border-2 border-red-500/30 hover:border-red-500/50 shadow-lg"
-          >
-            <Square className="w-4 h-4 fill-current" />
-            <span className="font-bold text-sm uppercase tracking-widest">End Session</span>
-          </button>
-        </>
-      )}
+            {/* 3. ACTIVE CALL (VISUALIZER) */}
+            {(callState === "active" || callState === "connecting") && (
+                <>
+                    <div className="w-full mb-8">
+                        <VoiceVisualizer
+                            isActive={callState === "active"}
+                            isAgentSpeaking={isAgentSpeaking}
+                        />
+                    </div>
 
-      {/* 4. IDLE (START) */}
-      {callState === "idle" && (
-        <div className="text-center">
-          <div className="w-full flex flex-col items-center justify-center mb-12 text-slate-400 space-y-3">
-            <p className="text-base font-light text-slate-400">Ready to begin?</p>
-          </div>
-          <button
-            onClick={handleStart}
-            className="group relative px-12 py-5 bg-white text-black hover:bg-slate-200 rounded-full font-bold text-base transition-all flex items-center gap-4 shadow-[0_0_40px_rgba(255,255,255,0.1)] hover:shadow-[0_0_60px_rgba(255,255,255,0.2)] mx-auto"
-          >
-            <Mic className="w-5 h-5" />
-            <span className="tracking-widest uppercase">Start Session</span>
-          </button>
-        </div>
-      )}
-    </motion.div>
-  );
+                    <div className="h-8 mb-8 text-center">
+                        {callState === "connecting" && <span className="text-[#10A37F] animate-pulse font-medium">Connecting to Serenity...</span>}
+                        {callState === "active" && (
+                            isAgentSpeaking ?
+                                <span className="text-[#10A37F] font-medium">Serenity is speaking...</span> :
+                                <span className="text-[#8E8EA0]">Listening to you...</span>
+                        )}
+                    </div>
+
+                    <button
+                        onClick={handleStop}
+                        className="px-8 py-4 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg transition-all flex items-center gap-3 border border-red-500/50"
+                    >
+                        <Square className="w-5 h-5 fill-current" />
+                        <span className="font-semibold">End Session</span>
+                    </button>
+                </>
+            )}
+
+            {/* 4. IDLE (START) */}
+            {callState === "idle" && (
+                <div className="text-center py-8">
+                    <h1 className="text-4xl font-light mb-2 text-[#ECECF1]">
+                        How are you <span className="text-[#10A37F] font-normal">feeling</span>?
+                    </h1>
+                    <p className="text-[#8E8EA0] mb-8">Ready to begin your session?</p>
+                    <button
+                        onClick={handleStart}
+                        className="px-10 py-4 bg-[#10A37F] hover:bg-[#19C37D] text-white rounded-lg font-semibold text-lg transition-all flex items-center gap-3 shadow-lg mx-auto"
+                    >
+                        <Mic className="w-6 h-6" />
+                        <span>Start Session</span>
+                    </button>
+                    <p className="text-xs text-[#8E8EA0] mt-4">Headphones recommended for best experience</p>
+                </div>
+            )}
+        </motion.div>
+    );
 }

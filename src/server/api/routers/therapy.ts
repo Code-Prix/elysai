@@ -18,15 +18,11 @@ const mapSessionToSummary = (session: any) => {
     emotional_state: session.emotionalState ?? "Neutral",
     emotionalState: session.emotionalState ?? "Neutral",
 
-    key_topics: session.topics ?? [],
-    topics: session.topics ?? [],
+    key_topics: (session.topics as string[]) ?? [],
+    topics: (session.topics as string[]) ?? [],
 
-    risk_flags: session.riskFlags ?? [],
-    riskFlags: session.riskFlags ?? [],
-
-    // Safety resources (not yet in DB schema, so default to empty)
-    safety_resources_provided: [],
-    safetyResources: [],
+    risk_flags: (session.riskFlags as string[]) ?? [],
+    riskFlags: (session.riskFlags as string[]) ?? [],
 
     narrative_summary: session.summary ?? "Summary unavailable.",
     summary: session.summary ?? "Summary unavailable.",
@@ -34,15 +30,25 @@ const mapSessionToSummary = (session: any) => {
 }
 
 export const therapyRouter = createTRPCRouter({
-  createWebCall: publicProcedure
+  createWebCall: protectedProcedure
     .input(z.object({
       userName: z.string().optional(),
       userContext: z.string().optional()
     }))
     .mutation(async ({ ctx, input }) => {
       try {
-        const userId = ctx.session?.user?.id || "guest";
-        const userName = input.userName || "Friend";
+        const userId = ctx.session.user.id;
+
+        // 1. Check Session Limit (Max 7)
+        const sessionCount = await ctx.prisma.therapySession.count({
+          where: { userId }
+        });
+
+        if (sessionCount >= 7) {
+          throw new Error("Session limit reached. You can only have 7 sessions.");
+        }
+
+        const userName = input.userName || ctx.session.user.name || "Friend";
 
         const webCall = await retell.call.createWebCall({
           agent_id: process.env.RETELL_AGENT_ID!,
@@ -59,64 +65,65 @@ export const therapyRouter = createTRPCRouter({
           accessToken: webCall.access_token,
           callId: webCall.call_id
         };
-      } catch (error) {
+      } catch (error: any) {
         console.error("Web Call Error:", error);
-        throw new Error("Failed to start web session.");
+        throw new Error(error.message || "Failed to start web session.");
       }
     }),
 
-  generateSummary: publicProcedure
+  generateSummary: protectedProcedure
     .input(z.object({ callId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      console.log(`[Summary] Request received for Call ID: ${input.callId}`);
       try {
         // 1. Database Check
         const savedSession = await ctx.prisma.therapySession.findUnique({
-          where: { retellCallId: input.callId }
+          where: { retellCallId: input.callId },
+          include: { generatedTasks: true }
         });
 
         if (savedSession) {
-          console.log("✅ [Summary] Returning saved summary from DB");
-          return mapSessionToSummary(savedSession);
+          console.log("✅ returning saved summary from DB");
+          return {
+            ...mapSessionToSummary(savedSession),
+            generatedTasks: savedSession.generatedTasks
+          };
         }
 
-        console.log("⚠️ [Summary] Webhook pending. Generating live summary...");
+        console.log("⚠️ Webhook pending. Generating live summary...");
 
-        // Fetch call details immediately (no artificial delay)
-        console.log(`[Summary] Fetching call details from Retell...`);
+        await new Promise(resolve => setTimeout(resolve, 1500));
         const call = await retell.call.retrieve(input.callId);
-        console.log(`[Summary] Retell status: ${call.call_status}, Transcript length: ${call.transcript?.length || 0}`);
 
-        // If no transcript yet, return processing state (frontend will poll)
-        if (!call.transcript || call.transcript.length === 0) {
-          console.warn("[Summary] No transcript available yet. Returning processing state.");
+        if (!call.transcript) {
           return {
             emotional_state: "Processing",
             key_topics: [],
             risk_flags: [],
-            safety_resources_provided: [],
-            narrative_summary: "Transcript not ready. Please wait...",
+            narrative_summary: "Processing...",
             emotionalState: "Processing",
-            safetyResources: []
+            generatedTasks: []
           };
         }
 
-        console.log(`[Summary] Sending transcript to Groq for analysis...`);
         const completion = await groq.chat.completions.create({
           messages: [
             {
               role: "system",
               content: `
                 Analyze this therapy transcript.
+                1. Summarize the session.
+                2. Identify emotional state.
+                3. Extract key topics and risk flags.
+                4. Generate 1-3 actionable tasks for the user for the next day based on the session.
+                
                 Output JSON:
                 {
                   "emotional_state": "string",
                   "key_topics": ["string"],
                   "risk_flags": ["string"],
-                  "safety_resources_provided": ["string"],
-                  "narrative_summary": "string"
+                  "narrative_summary": "string",
+                  "next_day_tasks": ["string"]
                 }
-                If the AI provided specific hotline numbers or emergency contacts, list them in "safety_resources_provided".
                 `
             },
             { role: "user", content: call.transcript }
@@ -125,16 +132,11 @@ export const therapyRouter = createTRPCRouter({
           response_format: { type: "json_object" }
         });
 
-        const content = completion.choices[0]?.message?.content;
-        if (!content) {
-          throw new Error("Groq returned empty content");
-        }
-
-        const analysis = JSON.parse(content);
-        console.log("[Summary] Analysis generated successfully.");
+        const analysis = JSON.parse(completion.choices[0]?.message?.content || "{}");
+        const tasks = analysis.next_day_tasks || [];
 
         // Upsert safely
-        await ctx.prisma.therapySession.upsert({
+        const session = await ctx.prisma.therapySession.upsert({
           where: { retellCallId: input.callId },
           update: {
             transcript: call.transcript,
@@ -143,21 +145,33 @@ export const therapyRouter = createTRPCRouter({
             emotionalState: analysis.emotional_state || "Unknown",
             topics: analysis.key_topics || [],
             riskFlags: analysis.risk_flags || [],
-            endedAt: new Date()
+            endedAt: new Date(),
+            generatedTasks: {
+              create: tasks.map((t: string) => ({
+                description: t,
+                userId: ctx.session.user.id
+              }))
+            }
           },
           create: {
             retellCallId: input.callId,
-            userId: ctx.session?.user?.id || null,
+            userId: ctx.session.user.id,
             transcript: call.transcript,
             audioUrl: call.recording_url,
             summary: analysis.narrative_summary || "Summary unavailable",
             emotionalState: analysis.emotional_state || "Unknown",
             topics: analysis.key_topics || [],
             riskFlags: analysis.risk_flags || [],
-            endedAt: new Date()
-          }
+            endedAt: new Date(),
+            generatedTasks: {
+              create: tasks.map((t: string) => ({
+                description: t,
+                userId: ctx.session.user.id
+              }))
+            }
+          },
+          include: { generatedTasks: true }
         });
-        console.log("[Summary] Saved to database.");
 
         return {
           ...analysis,
@@ -165,36 +179,65 @@ export const therapyRouter = createTRPCRouter({
           emotionalState: analysis.emotional_state,
           topics: analysis.key_topics,
           riskFlags: analysis.risk_flags,
-          safetyResources: analysis.safety_resources_provided || [],
-          summary: analysis.narrative_summary
+          summary: analysis.narrative_summary,
+          generatedTasks: session.generatedTasks
         };
 
       } catch (error) {
-        console.error("❌ [Summary] GENERATION FAILED:", error);
-        console.error("Error details:", JSON.stringify(error, null, 2));
-        // Return a structured error that the frontend can recognize
+        console.error("❌ SUMMARY GENERATION FAILED:", error);
         return {
           emotional_state: "Error",
           emotionalState: "Error",
           key_topics: [],
           risk_flags: [],
-          safetyResources: [],
-          narrative_summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`
+          narrative_summary: "We couldn't generate the summary right now.",
+          generatedTasks: []
         };
       }
     }),
 
-  testBridge: publicProcedure
-    .mutation(async () => {
-      try {
-        const res = await fetch("http://localhost:8080");
-        if (res.ok) {
-          return { success: true };
+  // Get all sessions for the authenticated user
+  getUserSessions: protectedProcedure
+    .query(async ({ ctx }) => {
+      const sessions = await ctx.prisma.therapySession.findMany({
+        where: { userId: ctx.session.user.id },
+        orderBy: { startedAt: 'desc' },
+        select: {
+          id: true,
+          retellCallId: true,
+          startedAt: true,
+          endedAt: true,
+          emotionalState: true,
+          summary: true,
         }
-        return { success: false };
-      } catch (e) {
-        console.error("Bridge Test Failed:", e);
-        return { success: false };
+      });
+
+      return sessions;
+    }),
+
+  // Get a specific session by ID
+  getSessionById: protectedProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const session = await ctx.prisma.therapySession.findFirst({
+        where: {
+          id: input.sessionId,
+          userId: ctx.session.user.id, // Ensure user owns this session
+        },
+        include: {
+          generatedTasks: true,
+        }
+      });
+
+      if (!session) {
+        throw new Error("Session not found");
       }
+
+      return {
+        ...mapSessionToSummary(session),
+        generatedTasks: session.generatedTasks,
+        startedAt: session.startedAt,
+        endedAt: session.endedAt,
+      };
     }),
 });

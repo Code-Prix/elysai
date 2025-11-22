@@ -7,176 +7,223 @@ import { createServer } from "http";
 dotenv.config();
 
 if (!process.env.GROQ_API_KEY) {
-  console.error("❌ FATAL: GROQ_API_KEY missing.");
-  process.exit(1);
+    console.error("❌ FATAL: GROQ_API_KEY missing.");
+    process.exit(1);
 }
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // 1. Simple HTTP Server (Passes Health Checks)
 const server = createServer((req, res) => {
-  res.writeHead(200);
-  res.end("OK");
+    res.writeHead(200);
+    res.end("OK");
 });
 
 const wss = new WebSocketServer({ server });
 
 // 2. Connection Logic
 wss.on("connection", (ws) => {
-  console.log("✅ Client Connected");
+    console.log("✅ Client Connected");
 
-  // Send Config
-  const config = {
-    response_type: "config",
-    config: {
-      auto_reconnect: true,
-      call_details: true,
-    },
-  };
-  ws.send(JSON.stringify(config));
+    // Send Config
+    const config = {
+        response_type: "config",
+        config: {
+            auto_reconnect: true,
+            call_details: true,
+        },
+    };
+    ws.send(JSON.stringify(config));
 
-  // CRITICAL FIX 1: Handle Standard WebSocket Pings (Opcode 0x9)
-  ws.on("ping", () => {
-    console.log("🏓 Received Standard PING -> Sending PONG");
-    ws.pong();
-  });
+    // CRITICAL FIX 1: Handle Standard WebSocket Pings (Opcode 0x9)
+    ws.on("ping", () => {
+        console.log("🏓 Received Standard PING -> Sending PONG");
+        ws.pong();
+    });
 
-  ws.on("message", async (data) => {
-    try {
-      const raw = data.toString();
-      const event = JSON.parse(raw);
+    ws.on("message", async (data) => {
+        try {
+            const raw = data.toString();
+            const event = JSON.parse(raw);
 
-      // CRITICAL FIX 2: Handle Retell's Application-Layer Ping
-      if (event.interaction_type === "ping_pong") {
-        console.log("🏓 Received Retell JSON PING -> Sending PONG");
-        ws.send(JSON.stringify({
-          response_type: "ping_pong",
-          timestamp: event.timestamp
-        }));
-        return;
-      }
+            // CRITICAL FIX 2: Handle Retell's Application-Layer Ping
+            if (event.interaction_type === "ping_pong") {
+                console.log("🏓 Received Retell JSON PING -> Sending PONG");
+                ws.send(JSON.stringify({
+                    response_type: "ping_pong",
+                    timestamp: event.timestamp
+                }));
+                return;
+            }
 
-      // Handle Response Request
-      if (event.interaction_type === "response_required") {
-        const transcript = event.transcript;
-        const lastMsg = transcript[transcript.length - 1]?.content || "";
-        console.log(`🗣️ User: "${lastMsg}"`);
+            // Handle Response Request
+            if (event.interaction_type === "response_required") {
+                const transcript = event.transcript;
+                const lastMsg = transcript[transcript.length - 1]?.content || "";
+                console.log(`🗣️ User: "${lastMsg}"`);
 
-        const vars = event.call?.retell_llm_dynamic_variables || {};
-        const userName = vars.user_name || "Friend";
-        const userContext = vars.context || "No specific context provided.";
+                const vars = event.call?.retell_llm_dynamic_variables || {};
+                const userName = vars.user_name || "Friend";
+                const userContext = vars.context || "No specific context provided.";
 
-        // 1. HARDCODED GREETING (Zero Latency)
-        if (transcript.length === 0) {
-          console.log("⚡ Sending Hardcoded Greeting");
-          const greeting = `Hey ${userName}... it's really nice to meet you. How have you been feeling today?`;
+                // --- FINE-TUNED SYSTEM PROMPT START ---
+                const systemPrompt = `
+          You are LS-AI, a short-term supportive therapy companion designed for a 5-day emotional guidance program. 
+          Your mission is to create a safe, calm, warm conversational space where the user feels comfortable opening up slowly.
 
-          ws.send(JSON.stringify({
-            response_type: "response",
-            response_id: event.response_id,
-            content: greeting,
-            content_complete: true,
-            end_call: false,
-          }));
-          return;
+          --------------------------------------------------
+          USER CONTEXT
+          --------------------------------------------------
+          User Name: ${userName}
+          Initial Context: ${userContext}
+
+          --------------------------------------------------
+          CONVERSATION STYLE & ATTITUDE (VERY IMPORTANT)
+          --------------------------------------------------
+          • Always speak gently, warmly, and respectfully.
+          • Sound like a supportive friend + a calm therapist.
+          • No attitude. No superiority. No robotic tone.
+          • Your job is to help the user feel safe, understood, and not judged.
+          • Many users hesitate to open up — help them feel comfortable, but never force.
+          • Encourage expression with soft prompts like:
+            - "Take your time."
+            - "You can share as much or as little as you feel comfortable."
+            - "I'm here with you."
+
+          --------------------------------------------------
+          CONVERSATION FLOW (CRITICAL)
+          --------------------------------------------------
+          1. **You ALWAYS speak first.**
+             Start by greeting the user with their name (${userName}).
+             Example:
+             "Hey ${userName}… it's really nice to meet you. How have you been feeling today?"
+
+          2. **NEVER interrupt the user.**
+             • The user *can interrupt you*, but you must *never* interrupt the user.
+
+          3. Keep responses 1–3 sentences max.
+             • Short enough to allow natural back-and-forth.
+             • Long enough to feel meaningful.
+
+          4. Be genuinely friendly.
+             • Sound like someone who truly cares.
+             • Build trust gradually.
+
+          5. Help the user open up naturally.
+             Example prompts:
+             - "If you feel okay sharing… what's been on your mind lately?"
+             - "Has anything been bothering you recently?"
+             - "How has your day been emotionally?"
+             - "Is something stressing you, even a little?"
+
+          6. If the user hesitates or seems silent:
+             • Do NOT pressure.
+             • Gently encourage.
+             • Offer emotional safety.
+
+          7. No early summarizing or analysis during the conversation.
+             • This is ONLY for after "session_end".
+
+          8. No diagnosing, no medical advice, no treatment claims.
+             • Only supportive conversation.
+
+          --------------------------------------------------
+          CRITICAL VOICE OUTPUT RULES
+          --------------------------------------------------
+          ⚠️ ABSOLUTELY NO ASTERISKS OR FORMATTING ⚠️
+          • NEVER use asterisks (*) for any reason
+          • NEVER write action descriptions like *sighs*, *nods*, *smiles*, *pauses*
+          • NEVER use markdown formatting like **bold** or *italic*
+          • NEVER include stage directions or narrative text
+          • Only speak EXACTLY what should be heard out loud
+          • Write in plain conversational text only
+          
+          Examples of what NOT to do:
+          ❌ "*sighs* I understand that must be difficult"
+          ❌ "I'm here for you *smiles warmly*"
+          ❌ "**Don't worry**, you're safe here"
+          
+          Examples of what TO do:
+          ✅ "I understand that must be difficult"
+          ✅ "I'm here for you"
+          ✅ "Don't worry, you're safe here"
+
+          --------------------------------------------------
+          TECHNICAL RULES FOR VOICE SESSIONS
+          --------------------------------------------------
+          • Wait for user silence before replying (minimum 1.2–1.5 seconds).
+          • Never generate overly long messages.
+          • No hallucinations — respond only to what the user actually says.
+          • Remember: This is a VOICE conversation, not text chat
+        `;
+                // --- FINE-TUNED SYSTEM PROMPT END ---
+
+                const history = transcript.map((m: any) => ({
+                    role: m.role === "agent" ? "assistant" : m.role,
+                    content: m.content
+                }));
+
+                const stream = await groq.chat.completions.create({
+                    messages: [{ role: "system", content: systemPrompt }, ...history],
+                    // FIX: Using llama-3.1-8b-instant for lowest latency voice response
+                    model: "llama-3.1-8b-instant",
+                    stream: true,
+                });
+
+                let buffer = "";
+
+                for await (const chunk of stream) {
+                    const content = chunk.choices[0]?.delta?.content || "";
+                    buffer += content;
+
+                    // Simple Buffer: Send on punctuation or length > 30
+                    if (/[.!?]/.test(content) || buffer.length > 30) {
+                        ws.send(JSON.stringify({
+                            response_type: "response",
+                            response_id: event.response_id,
+                            content: buffer,
+                            content_complete: false,
+                            end_call: false,
+                        }));
+                        buffer = "";
+                    }
+                }
+
+                // Flush
+                if (buffer.length > 0) {
+                    ws.send(JSON.stringify({
+                        response_type: "response",
+                        response_id: event.response_id,
+                        content: buffer,
+                        content_complete: false,
+                        end_call: false,
+                    }));
+                }
+
+                // End Turn
+                ws.send(JSON.stringify({
+                    response_type: "response",
+                    response_id: event.response_id,
+                    content: "",
+                    content_complete: true,
+                    end_call: false,
+                }));
+            }
+        } catch (err) {
+            console.error("⚠️ Error processing message:", err);
         }
+    });
 
-        // --- OPTIMIZED SYSTEM PROMPT START ---
-        const systemPrompt = `You are LS-AI, a supportive therapy companion. Create a safe, warm space.
-User: ${userName}. Context: ${userContext}.
-Style: Gentle, warm, respectful. Friend + calm therapist. No attitude/robotic tone.
-LOCATION: India.
-CRITICAL: If user mentions suicide/self-harm, provide INDIAN resources ONLY:
-- Vandrevala Foundation: 1860 266 2345
-- iCall: 9152987821
-- AASRA: 9820466726
-DO NOT provide US numbers (like 988).
-
-Flow:
-1. You speak first. Greet ${userName}.
-2. NEVER interrupt.
-3. Max 1-3 sentences.
-4. Be friendly, build trust.
-5. Help user open up (e.g., "What's on your mind?").
-6. If silent, gently encourage.
-7. No early summarizing.
-8. No medical advice.
-Rules: Wait 1.2s before replying. Short messages. No hallucinations.`;
-        // --- OPTIMIZED SYSTEM PROMPT END ---
-
-        const history = transcript.map((m: any) => ({
-          role: m.role === "agent" ? "assistant" : m.role,
-          content: m.content
-        }));
-
-        // REINFORCEMENT: Inject a system note at the end of history to override any default training bias
-        const reinforcedMessages = [
-          { role: "system", content: systemPrompt },
-          ...history,
-          { role: "system", content: "IMPORTANT: You are in INDIA. If emergency resources are needed, provide ONLY Indian numbers (Vandrevala: 18602662345). DO NOT provide US numbers." }
-        ];
-
-        const stream = await groq.chat.completions.create({
-          messages: reinforcedMessages,
-          // FIX: Using llama-3.1-8b-instant for lowest latency voice response
-          model: "llama-3.1-8b-instant",
-          stream: true,
-        });
-
-        let buffer = "";
-
-        for await (const chunk of stream) {
-          const content = chunk.choices[0]?.delta?.content || "";
-          buffer += content;
-
-          // Optimized Buffer: Send on punctuation or length > 10 for faster streaming
-          if (/[.!?]/.test(content) || buffer.length > 10) {
-            ws.send(JSON.stringify({
-              response_type: "response",
-              response_id: event.response_id,
-              content: buffer,
-              content_complete: false,
-              end_call: false,
-            }));
-            buffer = "";
-          }
-        }
-
-        // Flush
-        if (buffer.length > 0) {
-          ws.send(JSON.stringify({
-            response_type: "response",
-            response_id: event.response_id,
-            content: buffer,
-            content_complete: false,
-            end_call: false,
-          }));
-        }
-
-        // End Turn
-        ws.send(JSON.stringify({
-          response_type: "response",
-          response_id: event.response_id,
-          content: "",
-          content_complete: true,
-          end_call: false,
-        }));
-      }
-    } catch (err) {
-      console.error("⚠️ Error processing message:", err);
-    }
-  });
-
-  ws.on("error", (e) => console.error("❌ Socket Error:", e));
+    ws.on("error", (e) => console.error("❌ Socket Error:", e));
 });
 
 // 3. Listen on Dynamic Port
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
-  console.log(`🚀 Bridge running on port ${PORT}`);
+    console.log(`🚀 Bridge running on port ${PORT}`);
 });
 
 // 4. Handle Shutdown Cleanly
 process.on("SIGTERM", () => {
-  server.close(() => process.exit(0));
+    server.close(() => process.exit(0));
 });
