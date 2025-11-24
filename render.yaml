@@ -3,7 +3,7 @@ services:
     name: elysai-bridge
     env: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm run build:bridge
     startCommand: npm run start:bridge
     envVars:
       - key: GROQ_API_KEY
