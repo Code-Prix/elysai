@@ -16,12 +16,17 @@ export function Sidebar() {
     const formatDate = (date: Date) => {
         const now = new Date();
         const sessionDate = new Date(date);
-        const diffTime = Math.abs(now.getTime() - sessionDate.getTime());
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        // Reset time part to compare just the dates
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const target = new Date(sessionDate.getFullYear(), sessionDate.getMonth(), sessionDate.getDate());
+
+        const diffTime = today.getTime() - target.getTime();
+        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
         if (diffDays === 0) return "Today";
         if (diffDays === 1) return "Yesterday";
-        if (diffDays < 7) return `${diffDays} days ago`;
+        if (diffDays < 7 && diffDays > 0) return `${diffDays} days ago`;
         return sessionDate.toLocaleDateString();
     };
 

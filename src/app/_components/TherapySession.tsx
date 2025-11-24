@@ -306,10 +306,10 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
                         </div>
 
                         <div className="h-8 mb-8 text-center relative z-10">
-                            {callState === "connecting" && <span className="text-indigo-400 animate-pulse font-medium tracking-wide">Connecting to Serenity...</span>}
+                            {callState === "connecting" && <span className="text-indigo-400 animate-pulse font-medium tracking-wide">Connecting to ElysAi...</span>}
                             {callState === "active" && (
                                 isAgentSpeaking ?
-                                    <span className="text-indigo-400 font-medium tracking-wide">Serenity is speaking...</span> :
+                                    <span className="text-indigo-400 font-medium tracking-wide">ElysAi is speaking...</span> :
                                     <span className="text-slate-400 tracking-wide">Listening to you...</span>
                             )}
                         </div>
@@ -336,7 +336,7 @@ function WebSessionView({ userName, userContext }: { userName: string, userConte
                         How are you <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-violet-400">feeling</span>?
                     </h1>
                     <p className="text-slate-400 text-lg mb-12 max-w-xl mx-auto relative z-10">
-                        Take a moment for yourself. Serenity is here to listen, understand, and guide you through your thoughts.
+                        Take a moment for yourself. ElysAi is here to listen, understand, and guide you through your thoughts.
                     </p>
 
                     <button

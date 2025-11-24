@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: elysai-bridge
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run start:bridge
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: PORT
+        value: 8080
+    autoDeploy: true

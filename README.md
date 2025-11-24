@@ -1,29 +1,39 @@
-# Create T3 App
+# ElysAI 🧠
 
-This is a [T3 Stack](https://create.t3.gg/) project bootstrapped with `create-t3-app`.
+**Your AI Therapy Companion**
 
-## What's next? How do I make an app with this?
+ElysAI is a next-generation therapy application that uses AI to provide real-time emotional support, session analysis, and task tracking. It features a premium "Deep Space" UI and intelligent backend systems for personalized care.
 
-We try to keep this project as simple as possible, so you can start with just the scaffolding we set up for you, and add additional things later when they become necessary.
+## 🚀 Quick Start
 
-If you are not familiar with the different technologies used in this project, please refer to the respective docs. If you still are in the wind, please join our [Discord](https://t3.gg/discord) and ask for help.
+1.  **Install Dependencies**
+    ```bash
+    npm install
+    ```
 
-- [Next.js](https://nextjs.org)
-- [NextAuth.js](https://next-auth.js.org)
-- [Prisma](https://prisma.io)
-- [Drizzle](https://orm.drizzle.team)
-- [Tailwind CSS](https://tailwindcss.com)
-- [tRPC](https://trpc.io)
+2.  **Start the Development Server**
+    ```bash
+    npm run dev
+    ```
 
-## Learn More
+3.  **Start the Backend Bridge (Required for AI)**
+    ```bash
+    npm run start:bridge
+    ```
 
-To learn more about the [T3 Stack](https://create.t3.gg/), take a look at the following resources:
+4.  **Open the App**
+    Visit [http://localhost:3000](http://localhost:3000)
 
-- [Documentation](https://create.t3.gg/)
-- [Learn the T3 Stack](https://create.t3.gg/en/faq#what-learning-resources-are-currently-available) — Check out these awesome tutorials
+## ✨ Key Features
 
-You can check out the [create-t3-app GitHub repository](https://github.com/t3-oss/create-t3-app) — your feedback and contributions are welcome!
+-   **Premium UI:** Glassmorphism design with fluid particle animations.
+-   **Real-time Voice Therapy:** Talk to ElysAi, your AI therapist (powered by Retell AI).
+-   **Smart Analysis:** Automatic session summaries, emotional tracking, and risk detection.
+-   **RAG Memory:** The AI remembers your last 5 sessions for context-aware conversations.
+-   **Therapist Referral:** Tracks your progress and suggests human therapists if needed.
 
-## How do I deploy this?
+## 🛠️ Tech Stack
 
-Follow our deployment guides for [Vercel](https://create.t3.gg/en/deployment/vercel), [Netlify](https://create.t3.gg/en/deployment/netlify) and [Docker](https://create.t3.gg/en/deployment/docker) for more information.
+-   **Frontend:** Next.js, Tailwind CSS, Framer Motion
+-   **Backend:** tRPC, Prisma, PostgreSQL
+-   **AI:** Retell AI (Voice), Groq (LLM)
